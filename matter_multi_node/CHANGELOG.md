@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0
+
+- **AC & Thermostat Support (`climate.*`)**: Exposes Home Assistant climate entities as standalone Matter `ThermostatDevice` accessories directly to Google Home and Apple Home.
+  - **HVAC Modes**: Full bidirectional synchronization for `off`, `cool`, `heat`, and `auto` modes.
+  - **Single & Dual Setpoint Sync**: Synchronizes target temperatures, heating/cooling setpoints, and deadbands conforming to Matter specification bounds.
+  - **Ambient Temperature Reporting**: Live room temperature measurement and unit conversion (°C and °F).
+  - **Service Dispatch**: Debounced bidirectional service calling for `climate.set_temperature` and `climate.set_hvac_mode`.
+- **Web Dashboard Climate Tab**: Added dedicated "Climate" filter tab, live temperature and setpoint metric cards, HVAC mode indicators, and quick power toggles.
+- **Defensive Node Allocation**: Added fallback safety defaults for sequential UDP ports and commissioning discriminators.
+
 ## 1.3.0
 
 - **Exact Device Naming in Google Home & Apple Home**: Injects Home Assistant entity friendly names into Matter's `BasicInformation` (`nodeLabel`, `productName`, `productLabel`, `vendorName`) so controllers automatically name devices after HA instead of falling back to generic names.

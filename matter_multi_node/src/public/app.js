@@ -31,6 +31,7 @@ const nodeCountBadge = document.getElementById('nodeCountBadge');
 const countAll = document.getElementById('countAll');
 const countSwitches = document.getElementById('countSwitches');
 const countLights = document.getElementById('countLights');
+const countClimate = document.getElementById('countClimate');
 const countSensors = document.getElementById('countSensors');
 const countActive = document.getElementById('countActive');
 const countInactive = document.getElementById('countInactive');
@@ -80,6 +81,7 @@ async function fetchNodes() {
 
     const switchCount = allDevices.filter((d) => d.deviceKind === 'switch').length;
     const lightCount = allDevices.filter((d) => d.deviceKind === 'light').length;
+    const climateCount = allDevices.filter((d) => d.deviceKind === 'climate').length;
     const sensorCount = allDevices.filter((d) => d.deviceKind === 'sensor').length;
     const activeCount = allDevices.filter((d) => d.isAnnounced).length;
     const inactiveCount = allDevices.length - activeCount;
@@ -87,6 +89,7 @@ async function fetchNodes() {
     countAll.textContent = allDevices.length;
     countSwitches.textContent = switchCount;
     if (countLights) countLights.textContent = lightCount;
+    if (countClimate) countClimate.textContent = climateCount;
     countSensors.textContent = sensorCount;
     countActive.textContent = activeCount;
     countInactive.textContent = inactiveCount;
@@ -104,6 +107,7 @@ function renderCards() {
     // Tab filtering
     if (activeTab === 'switch' && dev.deviceKind !== 'switch') return false;
     if (activeTab === 'light' && dev.deviceKind !== 'light') return false;
+    if (activeTab === 'climate' && dev.deviceKind !== 'climate') return false;
     if (activeTab === 'sensor' && dev.deviceKind !== 'sensor') return false;
     if (activeTab === 'active' && !dev.isAnnounced) return false;
     if (activeTab === 'inactive' && dev.isAnnounced) return false;
@@ -121,7 +125,7 @@ function renderCards() {
       cardsGrid.innerHTML = `
         <div class="empty-state">
           <p>No devices discovered from Home Assistant yet.</p>
-          <p class="subtitle">Ensure you have entities starting with <code>switch.</code>, <code>light.</code>, <code>input_boolean.</code>, or temperature/humidity sensors.</p>
+          <p class="subtitle">Ensure you have entities starting with <code>switch.</code>, <code>light.</code>, <code>climate.</code>, <code>input_boolean.</code>, or temperature/humidity sensors.</p>
         </div>`;
     } else {
       cardsGrid.innerHTML = `
@@ -138,6 +142,7 @@ function renderCards() {
 function renderCard(dev) {
   const isSwitch = dev.deviceKind === 'switch';
   const isLight = dev.deviceKind === 'light';
+  const isClimate = dev.deviceKind === 'climate';
   const isSensor = dev.deviceKind === 'sensor';
   const isPaired = dev.isCommissioned;
   const statusPill = isPaired
@@ -159,6 +164,8 @@ function renderCard(dev) {
     } else {
       typePill = '<span class="pill type-badge">Light</span>';
     }
+  } else if (isClimate) {
+    typePill = '<span class="pill type-badge">Climate / AC</span>';
   } else if (isSensor) {
     typePill = '<span class="pill type-badge">Multi-Sensor</span>';
   }
@@ -168,9 +175,36 @@ function renderCard(dev) {
     formattedCode = `${formattedCode.slice(0, 4)}-${formattedCode.slice(4, 7)}-${formattedCode.slice(7)}`;
   }
 
-  // Metrics block (Sensors & Lights)
+  // Metrics block (Sensors, Lights, Climate)
   let metricsHtml = '';
-  if (isSensor) {
+  if (isClimate) {
+    const unit = dev.tempUnit === '°F' || dev.tempUnit === 'F' ? 'F' : 'C';
+    const currentStr = dev.currentTemp !== null && dev.currentTemp !== undefined ? `${dev.currentTemp}°${unit}` : '--';
+    let targetStr = '--';
+    if (dev.targetTemp !== null && dev.targetTemp !== undefined) {
+      targetStr = `${dev.targetTemp}°${unit}`;
+    } else if (dev.targetTempLow !== null && dev.targetTempHigh !== null) {
+      targetStr = `${dev.targetTempLow}° - ${dev.targetTempHigh}°`;
+    }
+    const modeStr = dev.hvacAction ? `${dev.hvacAction}` : (dev.hvacMode || 'off');
+
+    metricsHtml = `
+      <div class="sensor-readings">
+        <div class="sensor-metric">
+          <span class="metric-label">Current</span>
+          <span class="metric-value">🌡️ ${currentStr}</span>
+        </div>
+        <div class="sensor-metric">
+          <span class="metric-label">Target</span>
+          <span class="metric-value">🎯 ${targetStr}</span>
+        </div>
+        <div class="sensor-metric">
+          <span class="metric-label">HVAC Mode</span>
+          <span class="metric-value" style="font-size: 0.95rem; text-transform: capitalize;">${escapeHtml(modeStr)}</span>
+        </div>
+      </div>
+    `;
+  } else if (isSensor) {
     metricsHtml = `
       <div class="sensor-readings">
         ${
@@ -245,7 +279,7 @@ function renderCard(dev) {
   } else {
     bodyContent = `
       <div class="unannounced-box">
-        <p>This ${isSwitch ? 'switch' : isLight ? 'light' : 'sensor'} is dormant. Announce it to allocate a Matter UDP port and pairing QR code.</p>
+        <p>This ${isSwitch ? 'switch' : isLight ? 'light' : isClimate ? 'thermostat / AC' : 'sensor'} is dormant. Announce it to allocate a Matter UDP port and pairing QR code.</p>
         <button class="btn-announce" onclick="enableAnnouncement('${escapeHtml(dev.id)}', this)">
           ⚡ Announce as Matter Device
         </button>
@@ -255,7 +289,20 @@ function renderCard(dev) {
 
   // Footer content
   let footerContent = '';
-  if (isSwitch || isLight) {
+  if (isClimate) {
+    const isRunning = dev.hvacMode && dev.hvacMode !== 'off';
+    footerContent = `
+      <div class="state-indicator">
+        <span class="state-dot ${isRunning ? 'on' : ''}"></span>
+        <span>HA Mode: ${(dev.hvacMode || 'off').toUpperCase()}</span>
+      </div>
+      <div class="footer-actions">
+        <button class="btn-toggle ${isRunning ? 'active' : ''}" onclick="toggleDevice('${escapeHtml(dev.id)}')">
+          ${isRunning ? 'Turn Off' : 'Turn On'}
+        </button>
+      </div>
+    `;
+  } else if (isSwitch || isLight) {
     footerContent = `
       <div class="state-indicator">
         <span class="state-dot ${dev.isOn ? 'on' : ''}"></span>

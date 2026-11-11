@@ -18,7 +18,7 @@
         </div>
         <div>
           <h1>Matter Multi-Node</h1>
-          <p class="subtitle">Standalone Matter switches, lights & sensors for Google Home (Bypasses Matter Bridge)</p>
+          <p class="subtitle">Standalone Matter switches, lights, climate & sensors for Google Home (Bypasses Matter Bridge)</p>
         </div>
       </div>
       <div class="header-right">
@@ -42,10 +42,10 @@
       </div>
       <p class="instruction-desc">
         Devices are <strong>not announced by default</strong> to prevent network congestion.
-        Click <strong>"Announce as Matter Device"</strong> on any switch or sensor you want in Google Home. It allocates a dedicated UDP port (starting at 5541) and generates its QR code.
+        Click <strong>"Announce as Matter Device"</strong> on any switch, light, climate unit, or sensor you want in Google Home. It allocates a dedicated UDP port (starting at 5541) and generates its QR code.
       </p>
       <ol class="instruction-steps">
-        <li>Click <strong>"Announce as Matter Device"</strong> on your desired switch or sensor below.</li>
+        <li>Click <strong>"Announce as Matter Device"</strong> on your desired device below.</li>
         <li>Open <strong>Google Home</strong> on your phone &gt; <strong>Devices</strong> &gt; <strong>+ (Add)</strong> &gt; <strong>Matter-enabled device</strong>.</li>
         <li>Scan the QR code (or enter the manual pairing code). Once paired, Google Home connects directly via local Matter!</li>
       </ol>
@@ -57,6 +57,7 @@
         <button class="tab-btn active" data-tab="all">All (<span id="countAll">0</span>)</button>
         <button class="tab-btn" data-tab="switch">Switches (<span id="countSwitches">0</span>)</button>
         <button class="tab-btn" data-tab="light">Lights (<span id="countLights">0</span>)</button>
+        <button class="tab-btn" data-tab="climate">Climate (<span id="countClimate">0</span>)</button>
         <button class="tab-btn" data-tab="sensor">Sensors (<span id="countSensors">0</span>)</button>
         <button class="tab-btn" data-tab="active">Active (<span id="countActive">0</span>)</button>
         <button class="tab-btn" data-tab="inactive">Unannounced (<span id="countInactive">0</span>)</button>

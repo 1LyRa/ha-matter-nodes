@@ -1,6 +1,6 @@
 # Matter Multi-Node Add-on
 
-Exposes your Home Assistant switches, lights, and climate sensors as **individual standalone Matter nodes** (starting on UDP port 5541) directly to Google Home, Apple Home, or Alexa, **without using a Matter Bridge**.
+Exposes your Home Assistant switches, lights, climate units (AC / Thermostats), and sensors as **individual standalone Matter nodes** (starting on UDP port 5541) directly to Google Home, Apple Home, or Alexa, **without using a Matter Bridge**.
 
 ## Why this exists
 Google Home frequently fails or drops devices when importing large Matter bridges. By presenting each device as an independent standalone Matter accessory:
@@ -22,6 +22,6 @@ Google Home frequently fails or drops devices when importing large Matter bridge
 1. Click **Matter Nodes** in your Home Assistant sidebar to open the dashboard.
 2. In the **Google Home** app on your phone:
    * Tap **Devices** > **+ (Add)** > **Matter-enabled device**.
-   * Point your camera at the switch's QR code displayed in the dashboard.
+   * Point your camera at the device's QR code displayed in the dashboard.
    * Or choose *"Set up without code"* and enter the 11-digit manual pairing code.
-3. Google Home will commission the switch directly to your local Matter fabric!
+3. Google Home will commission the device directly to your local Matter fabric!

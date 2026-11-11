@@ -1,6 +1,6 @@
 # Matter Multi-Node Home Assistant Add-on
 
-Custom Home Assistant Add-on that exposes your switches, lights, and climate sensors as **individual standalone Matter accessories** directly to Google Home, Apple Home, and Alexa—completely bypassing Matter Bridge / Aggregator bugs.
+Custom Home Assistant Add-on that exposes your switches, lights, climate units (AC/Thermostats), and sensors as **individual standalone Matter accessories** directly to Google Home, Apple Home, and Alexa—completely bypassing Matter Bridge / Aggregator bugs.
 
 ---
 
@@ -16,6 +16,11 @@ Google Home frequently fails or corrupts device states when importing large Matt
 
 ## Supported Devices
 
+- **Thermostats & Air Conditioners**: `climate.*`
+  - Matter `ThermostatDevice` with UI configuration
+  - Dual and single setpoint sync (Cooling / Heating / Auto)
+  - Full HVAC mode synchronization (`off`, `cool`, `heat`, `auto`)
+  - Ambient room temperature reporting with automatic unit conversion (°C / °F)
 - **Lights**: `light.*`
   - Simple Lights (Matter `OnOffLight`)
   - Dimmable Lights (Matter `DimmableLight`, 0–255 to 1–254 level translation)
@@ -47,8 +52,8 @@ Google Home frequently fails or corrupts device states when importing large Matt
 ## How to Pair Devices to Google Home
 
 1. Open **Matter Nodes** in your Home Assistant sidebar.
-2. Select the switch or sensor you want to connect and click **"Announce as Matter Device"**.
+2. Select the switch, light, climate unit, or sensor you want to connect and click **"Announce as Matter Device"**.
 3. Open the **Google Home** app on your phone:
    - Tap **Devices** > **+ (Add)** > **Matter-enabled device**.
    - Scan the QR code displayed on the dashboard (or enter the 11-digit manual pairing code).
-4. Google Home connects directly to your switch or sensor via local Matter!
+4. Google Home connects directly to your device via local Matter!

@@ -7,8 +7,12 @@ import {
   DimmableLightDevice,
   ColorTemperatureLightDevice,
   ExtendedColorLightDevice,
+  ThermostatDevice,
 } from '@matter/main/devices';
 import { PowerSourceServer } from '@matter/main/behaviors/power-source';
+import { ThermostatServer } from '@matter/main/behaviors/thermostat';
+import { ThermostatUserInterfaceConfigurationServer } from '@matter/main/behaviors/thermostat-user-interface-configuration';
+import { Thermostat } from '@matter/main/clusters';
 import QRCode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
@@ -20,6 +24,44 @@ function convertTemperatureToMatter(value, unit) {
     celsius = (celsius - 32) * (5 / 9);
   }
   return Math.round(celsius * 100);
+}
+
+function convertMatterToTemperature(value, unit) {
+  if (value === null || value === undefined || isNaN(value)) return null;
+  let celsius = value / 100;
+  if (unit === '°F' || unit === 'F') {
+    return Math.round(((celsius * 9) / 5 + 32) * 10) / 10;
+  }
+  return Math.round(celsius * 10) / 10;
+}
+
+function haModeToMatterSystemMode(mode) {
+  switch (mode) {
+    case 'off': return Thermostat.SystemMode.Off;
+    case 'cool': return Thermostat.SystemMode.Cool;
+    case 'heat': return Thermostat.SystemMode.Heat;
+    case 'emergency_heat': return Thermostat.SystemMode.EmergencyHeat;
+    case 'auto':
+    case 'heat_cool': return Thermostat.SystemMode.Auto;
+    case 'fan_only': return Thermostat.SystemMode.FanOnly;
+    case 'dry': return Thermostat.SystemMode.Dry;
+    case 'sleep': return Thermostat.SystemMode.Sleep;
+    default: return Thermostat.SystemMode.Off;
+  }
+}
+
+function matterSystemModeToHa(mode, supported = []) {
+  switch (mode) {
+    case Thermostat.SystemMode.Off: return 'off';
+    case Thermostat.SystemMode.Cool: return 'cool';
+    case Thermostat.SystemMode.Heat: return 'heat';
+    case Thermostat.SystemMode.EmergencyHeat: return supported.includes('emergency_heat') ? 'emergency_heat' : 'heat';
+    case Thermostat.SystemMode.Auto: return supported.includes('auto') ? 'auto' : (supported.includes('heat_cool') ? 'heat_cool' : 'cool');
+    case Thermostat.SystemMode.FanOnly: return supported.includes('fan_only') ? 'fan_only' : 'off';
+    case Thermostat.SystemMode.Dry: return supported.includes('dry') ? 'dry' : 'off';
+    case Thermostat.SystemMode.Sleep: return supported.includes('sleep') ? 'sleep' : 'off';
+    default: return 'off';
+  }
 }
 
 function convertHumidityToMatter(value) {
@@ -88,12 +130,12 @@ export class MatterManager {
     const usedPorts = new Set(Object.values(this.enabledConfig).map((c) => c.port).filter(Boolean));
     const usedDiscs = new Set(Object.values(this.enabledConfig).map((c) => c.discriminator).filter(Boolean));
 
-    let port = this.config.startPort;
+    let port = this.config.startPort || 5541;
     while (usedPorts.has(port)) {
       port++;
     }
 
-    let discriminator = this.config.discriminatorStart;
+    let discriminator = this.config.discriminatorStart || 3841;
     while (usedDiscs.has(discriminator)) {
       discriminator = (discriminator + 1) % 4096;
     }
@@ -102,14 +144,14 @@ export class MatterManager {
   }
 
   shouldIncludeEntity(entityId) {
-    if (this.config.includeEntities.length > 0) {
+    if (this.config.includeEntities && this.config.includeEntities.length > 0) {
       return this.config.includeEntities.includes(entityId);
     }
-    if (this.config.excludeEntities.includes(entityId)) {
+    if (this.config.excludeEntities && this.config.excludeEntities.includes(entityId)) {
       return false;
     }
     const domain = entityId.split('.')[0];
-    return this.config.filterDomains.includes(domain);
+    return Array.isArray(this.config.filterDomains) ? this.config.filterDomains.includes(domain) : true;
   }
 
   async syncWithHAStates(statesMap) {
@@ -184,7 +226,50 @@ export class MatterManager {
         this.entityToDeviceId.set(entityId, entityId);
       }
 
-      // 3. Collect Candidate Sensors (Temperature, Humidity, Battery)
+      // 3. Process Climate (Thermostats & ACs)
+      if (domain === 'climate') {
+        const friendlyName = stateObj.attributes?.friendly_name || entityId;
+        const supportedModes = stateObj.attributes?.hvac_modes || ['off', 'heat', 'cool'];
+        const hasCool = supportedModes.includes('cool');
+        const hasHeat = supportedModes.includes('heat');
+        const hasAuto = supportedModes.includes('auto') || supportedModes.includes('heat_cool');
+
+        const currentTemp = stateObj.attributes?.current_temperature ?? null;
+        const targetTemp = stateObj.attributes?.temperature ?? null;
+        const targetTempLow = stateObj.attributes?.target_temp_low ?? null;
+        const targetTempHigh = stateObj.attributes?.target_temp_high ?? null;
+        const minTemp = stateObj.attributes?.min_temp ?? (stateObj.attributes?.unit_of_measurement === '°F' ? 45 : 7);
+        const maxTemp = stateObj.attributes?.max_temp ?? (stateObj.attributes?.unit_of_measurement === '°F' ? 95 : 35);
+        const tempUnit = stateObj.attributes?.unit_of_measurement || '°C';
+        const hvacMode = stateObj.state;
+        const hvacAction = stateObj.attributes?.hvac_action || null;
+        const isOn = hvacMode !== 'off';
+
+        this.discoveredDevices.set(entityId, {
+          id: entityId,
+          domain,
+          deviceKind: 'climate',
+          friendlyName,
+          isOn,
+          hvacMode,
+          hvacAction,
+          supportedModes,
+          hasCool: hasCool || (!hasHeat && !hasCool),
+          hasHeat,
+          hasAuto,
+          currentTemp,
+          targetTemp,
+          targetTempLow,
+          targetTempHigh,
+          minTemp,
+          maxTemp,
+          tempUnit,
+          entityId,
+        });
+        this.entityToDeviceId.set(entityId, entityId);
+      }
+
+      // 4. Collect Candidate Sensors (Temperature, Humidity, Battery)
       if (domain === 'sensor') {
         const deviceClass = stateObj.attributes?.device_class;
         const unit = stateObj.attributes?.unit_of_measurement;
@@ -313,6 +398,8 @@ export class MatterManager {
           lightDeviceClass = OnOffLightDevice;
         }
         primaryDeviceType = lightDeviceClass.deviceType;
+      } else if (dev.deviceKind === 'climate') {
+        primaryDeviceType = ThermostatDevice.deviceType;
       } else {
         primaryDeviceType = TemperatureSensorDevice.deviceType;
       }
@@ -344,7 +431,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.3.0',
+          softwareVersionString: '1.4.0',
         },
       });
 
@@ -604,6 +691,188 @@ export class MatterManager {
             updatingFromHA = false;
           }
         };
+      } else if (dev.deviceKind === 'climate') {
+        const features = [];
+        if (dev.hasHeat) features.push(Thermostat.Feature.Heating);
+        if (dev.hasCool) features.push(Thermostat.Feature.Cooling);
+        if (dev.hasAuto) features.push(Thermostat.Feature.AutoMode);
+
+        const ThermostatClass = ThermostatDevice.with(
+          ThermostatServer.with(...features),
+          ThermostatUserInterfaceConfigurationServer
+        );
+
+        const localTemp = convertTemperatureToMatter(dev.currentTemp, dev.tempUnit) ?? 2100;
+        const mTarget = dev.targetTemp !== null ? convertTemperatureToMatter(dev.targetTemp, dev.tempUnit) : 2200;
+
+        let mCool = dev.hasAuto && dev.targetTempHigh !== null
+          ? convertTemperatureToMatter(dev.targetTempHigh, dev.tempUnit)
+          : (dev.hvacMode === 'cool' ? mTarget : 2400);
+
+        let mHeat = dev.hasAuto && dev.targetTempLow !== null
+          ? convertTemperatureToMatter(dev.targetTempLow, dev.tempUnit)
+          : (dev.hvacMode === 'heat' ? mTarget : 2000);
+
+        mHeat = Math.max(700, Math.min(3000, mHeat));
+        mCool = Math.max(1600, Math.min(3200, mCool));
+        if (dev.hasAuto && mCool < mHeat + 150) {
+          mCool = Math.min(3200, mHeat + 150);
+        }
+
+        const mControlSeq = (dev.hasHeat && dev.hasCool)
+          ? Thermostat.ControlSequenceOfOperation.CoolingAndHeating
+          : dev.hasCool
+          ? Thermostat.ControlSequenceOfOperation.CoolingOnly
+          : Thermostat.ControlSequenceOfOperation.HeatingOnly;
+
+        const mSystemMode = haModeToMatterSystemMode(dev.hvacMode);
+
+        const tConfig = {
+          localTemperature: localTemp,
+          systemMode: mSystemMode,
+          controlSequenceOfOperation: mControlSeq,
+        };
+
+        if (dev.hasCool) {
+          tConfig.occupiedCoolingSetpoint = mCool;
+          tConfig.minCoolSetpointLimit = 1600;
+          tConfig.maxCoolSetpointLimit = 3200;
+        }
+
+        if (dev.hasHeat) {
+          tConfig.occupiedHeatingSetpoint = mHeat;
+          tConfig.minHeatSetpointLimit = 700;
+          tConfig.maxHeatSetpointLimit = 3000;
+        }
+
+        if (dev.hasAuto) {
+          tConfig.minSetpointDeadBand = 15;
+        }
+
+        const endpoint = await node.add(ThermostatClass, {
+          id: 'thermostat',
+          thermostat: tConfig,
+          thermostatUserInterfaceConfiguration: {
+            temperatureDisplayMode: (dev.tempUnit === '°F' || dev.tempUnit === 'F') ? 1 : 0,
+          },
+        });
+        endpoints.thermostat = endpoint;
+
+        let updatingFromHA = false;
+        let tempDebounceTimer = null;
+        const pendingSetpoints = {};
+
+        const sendSetpointsToHA = () => {
+          if (tempDebounceTimer) clearTimeout(tempDebounceTimer);
+          tempDebounceTimer = setTimeout(async () => {
+            tempDebounceTimer = null;
+            try {
+              if (dev.hasAuto && (dev.hvacMode === 'auto' || dev.hvacMode === 'heat_cool')) {
+                const payload = {};
+                if (pendingSetpoints.cooling !== undefined) payload.target_temp_high = pendingSetpoints.cooling;
+                if (pendingSetpoints.heating !== undefined) payload.target_temp_low = pendingSetpoints.heating;
+                console.log(`[Matter Node: ${dev.friendlyName}] Syncing dual setpoints to HA:`, payload);
+                await this.haClient.callService('climate', 'set_temperature', dev.entityId, payload);
+              } else {
+                const targetVal = dev.hvacMode === 'heat'
+                  ? (pendingSetpoints.heating ?? pendingSetpoints.cooling)
+                  : (pendingSetpoints.cooling ?? pendingSetpoints.heating);
+                if (targetVal !== undefined) {
+                  console.log(`[Matter Node: ${dev.friendlyName}] Syncing target temp to HA:`, targetVal);
+                  await this.haClient.callService('climate', 'set_temperature', dev.entityId, { temperature: targetVal });
+                }
+              }
+            } finally {
+              delete pendingSetpoints.cooling;
+              delete pendingSetpoints.heating;
+            }
+          }, 120);
+        };
+
+        endpoint.events.thermostat.events.systemMode$Changed.on(async (newMode) => {
+          if (updatingFromHA) return;
+          const targetHaMode = matterSystemModeToHa(newMode, dev.supportedModes);
+          console.log(`[Matter Node: ${dev.friendlyName}] Thermostat systemMode changed: ${newMode} -> HA mode: ${targetHaMode}`);
+          dev.hvacMode = targetHaMode;
+          dev.isOn = targetHaMode !== 'off';
+          info.hvacMode = targetHaMode;
+          info.isOn = dev.isOn;
+          await this.haClient.callService('climate', 'set_hvac_mode', dev.entityId, { hvac_mode: targetHaMode });
+        });
+
+        if (endpoint.events.thermostat.events.occupiedCoolingSetpoint$Changing) {
+          endpoint.events.thermostat.events.occupiedCoolingSetpoint$Changing.on((newCool) => {
+            if (updatingFromHA || !newCool) return;
+            const haTemp = convertMatterToTemperature(newCool, dev.tempUnit);
+            console.log(`[Matter Node: ${dev.friendlyName}] Cooling setpoint command: ${newCool} (HA: ${haTemp}°${dev.tempUnit})`);
+            pendingSetpoints.cooling = haTemp;
+            info.targetTemp = haTemp;
+            sendSetpointsToHA();
+          });
+        }
+
+        if (endpoint.events.thermostat.events.occupiedHeatingSetpoint$Changing) {
+          endpoint.events.thermostat.events.occupiedHeatingSetpoint$Changing.on((newHeat) => {
+            if (updatingFromHA || !newHeat) return;
+            const haTemp = convertMatterToTemperature(newHeat, dev.tempUnit);
+            console.log(`[Matter Node: ${dev.friendlyName}] Heating setpoint command: ${newHeat} (HA: ${haTemp}°${dev.tempUnit})`);
+            pendingSetpoints.heating = haTemp;
+            info.targetTemp = haTemp;
+            sendSetpointsToHA();
+          });
+        }
+
+        updateFromHA = async (newDev) => {
+          updatingFromHA = true;
+          try {
+            if (newDev.currentTemp !== null && newDev.currentTemp !== undefined) {
+              const mLocal = convertTemperatureToMatter(newDev.currentTemp, newDev.tempUnit);
+              if (endpoint.state.thermostat.localTemperature !== mLocal) {
+                await endpoint.set({ thermostat: { localTemperature: mLocal } });
+                info.currentTemp = newDev.currentTemp;
+              }
+            }
+
+            const targetMMode = haModeToMatterSystemMode(newDev.hvacMode);
+            if (endpoint.state.thermostat.systemMode !== targetMMode) {
+              await endpoint.set({ thermostat: { systemMode: targetMMode } });
+              info.hvacMode = newDev.hvacMode;
+              info.isOn = newDev.hvacMode !== 'off';
+            }
+
+            if (newDev.targetTemp !== null && newDev.targetTemp !== undefined) {
+              const mVal = convertTemperatureToMatter(newDev.targetTemp, newDev.tempUnit);
+              if (newDev.hvacMode === 'heat' && dev.hasHeat) {
+                const clamped = Math.max(700, Math.min(3000, mVal));
+                if (endpoint.state.thermostat.occupiedHeatingSetpoint !== clamped) {
+                  await endpoint.set({ thermostat: { occupiedHeatingSetpoint: clamped } });
+                  info.targetTemp = newDev.targetTemp;
+                }
+              } else if (dev.hasCool) {
+                const clamped = Math.max(1600, Math.min(3200, mVal));
+                if (endpoint.state.thermostat.occupiedCoolingSetpoint !== clamped) {
+                  await endpoint.set({ thermostat: { occupiedCoolingSetpoint: clamped } });
+                  info.targetTemp = newDev.targetTemp;
+                }
+              }
+            } else if (newDev.targetTempLow !== null && newDev.targetTempHigh !== null && dev.hasAuto) {
+              const mLow = Math.max(700, Math.min(3000, convertTemperatureToMatter(newDev.targetTempLow, newDev.tempUnit)));
+              let mHigh = Math.max(1600, Math.min(3200, convertTemperatureToMatter(newDev.targetTempHigh, newDev.tempUnit)));
+              if (mHigh < mLow + 150) mHigh = Math.min(3200, mLow + 150);
+
+              const toSet = {};
+              if (endpoint.state.thermostat.occupiedHeatingSetpoint !== mLow) toSet.occupiedHeatingSetpoint = mLow;
+              if (endpoint.state.thermostat.occupiedCoolingSetpoint !== mHigh) toSet.occupiedCoolingSetpoint = mHigh;
+              if (Object.keys(toSet).length > 0) {
+                await endpoint.set({ thermostat: toSet });
+                info.targetTempLow = newDev.targetTempLow;
+                info.targetTempHigh = newDev.targetTempHigh;
+              }
+            }
+          } finally {
+            updatingFromHA = false;
+          }
+        };
       }
 
       const pairingCodes = node.state.commissioning.pairingCodes || {};
@@ -629,6 +898,13 @@ export class MatterManager {
         friendlyName: dev.friendlyName,
         deviceKind: dev.deviceKind,
         lightType: dev.lightType || null,
+        hvacMode: dev.hvacMode || null,
+        hvacAction: dev.hvacAction || null,
+        currentTemp: dev.currentTemp ?? null,
+        targetTemp: dev.targetTemp ?? null,
+        targetTempLow: dev.targetTempLow ?? null,
+        targetTempHigh: dev.targetTempHigh ?? null,
+        supportedModes: dev.supportedModes || [],
         port,
         discriminator,
         passcode: this.config.passcode,
@@ -732,6 +1008,24 @@ export class MatterManager {
       if (change.attributes?.xy_color !== undefined) {
         dev.xyColor = change.attributes.xy_color;
       }
+    } else if (dev.deviceKind === 'climate') {
+      dev.hvacMode = change.raw_state;
+      dev.isOn = dev.hvacMode !== 'off';
+      if (change.attributes?.current_temperature !== undefined) {
+        dev.currentTemp = change.attributes.current_temperature;
+      }
+      if (change.attributes?.temperature !== undefined) {
+        dev.targetTemp = change.attributes.temperature;
+      }
+      if (change.attributes?.target_temp_low !== undefined) {
+        dev.targetTempLow = change.attributes.target_temp_low;
+      }
+      if (change.attributes?.target_temp_high !== undefined) {
+        dev.targetTempHigh = change.attributes.target_temp_high;
+      }
+      if (change.attributes?.hvac_action !== undefined) {
+        dev.hvacAction = change.attributes.hvac_action;
+      }
     } else if (dev.deviceKind === 'sensor') {
       const numVal = parseFloat(change.raw_state);
       if (entity_id === dev.tempEntity) {
@@ -769,6 +1063,13 @@ export class MatterManager {
           friendlyName: dev.friendlyName,
           deviceKind: dev.deviceKind,
           lightType: dev.lightType || null,
+          hvacMode: dev.hvacMode || null,
+          hvacAction: dev.hvacAction || null,
+          currentTemp: dev.currentTemp ?? null,
+          targetTemp: dev.targetTemp ?? null,
+          targetTempLow: dev.targetTempLow ?? null,
+          targetTempHigh: dev.targetTempHigh ?? null,
+          supportedModes: dev.supportedModes || [],
           port: savedConfig?.port || null,
           discriminator: savedConfig?.discriminator || null,
           passcode: this.config.passcode,
@@ -800,9 +1101,23 @@ export class MatterManager {
 
   async toggleFromWeb(deviceId) {
     const dev = this.discoveredDevices.get(deviceId);
-    if (!dev || (dev.deviceKind !== 'switch' && dev.deviceKind !== 'light')) return false;
-    const newState = !dev.isOn;
-    return await this.haClient.setEntityState(dev.entityId, newState);
+    if (!dev) return false;
+
+    if (dev.deviceKind === 'climate') {
+      if (dev.hvacMode !== 'off') {
+        return await this.haClient.callService('climate', 'set_hvac_mode', dev.entityId, { hvac_mode: 'off' });
+      } else {
+        const firstActiveMode = dev.supportedModes.find((m) => m !== 'off') || 'cool';
+        return await this.haClient.callService('climate', 'set_hvac_mode', dev.entityId, { hvac_mode: firstActiveMode });
+      }
+    }
+
+    if (dev.deviceKind === 'switch' || dev.deviceKind === 'light') {
+      const newState = !dev.isOn;
+      return await this.haClient.setEntityState(dev.entityId, newState);
+    }
+
+    return false;
   }
 
   async close() {
