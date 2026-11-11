@@ -56,6 +56,16 @@ export function createWebServer(config, matterManager, haClient) {
     }
   });
 
+  app.post('/api/nodes/:deviceId/reset', async (req, res) => {
+    const { deviceId } = req.params;
+    try {
+      const info = await matterManager.resetNodeForDevice(deviceId);
+      res.json({ ok: true, info });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/nodes/:deviceId/toggle', async (req, res) => {
     const { deviceId } = req.params;
     const success = await matterManager.toggleFromWeb(deviceId);

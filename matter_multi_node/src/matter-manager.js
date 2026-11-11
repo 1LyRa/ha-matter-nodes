@@ -561,7 +561,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.5.2',
+          softwareVersionString: '1.5.3',
         },
       });
 
@@ -572,7 +572,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.5.2',
+            softwareVersionString: '1.5.3',
           },
         });
       } catch (err) {
@@ -1240,15 +1240,73 @@ export class MatterManager {
     }
 
     const entry = this.nodes.get(deviceId);
-    if (!entry) return;
-
-    console.log(`[Matter Manager] Stopping Matter node for ${deviceId}...`);
-    try {
-      await entry.node.close();
-    } catch (err) {
-      console.warn(`[Matter Manager] Error while closing node for ${deviceId}:`, err.message);
+    if (entry) {
+      console.log(`[Matter Manager] Stopping Matter node for ${deviceId}...`);
+      try {
+        await entry.node.close();
+      } catch (err) {
+        console.warn(`[Matter Manager] Error while closing node for ${deviceId}:`, err.message);
+      }
+      this.nodes.delete(deviceId);
     }
-    this.nodes.delete(deviceId);
+
+    // Clean up persistent storage so re-announcing always starts fresh
+    const sanitizedId = deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const storageDir = path.join(this.config.storagePath, sanitizedId);
+    if (fs.existsSync(storageDir)) {
+      try {
+        fs.rmSync(storageDir, { recursive: true, force: true });
+        console.log(`[Matter Manager] Cleared storage for unannounced node: ${sanitizedId}`);
+      } catch (err) {
+        console.warn(`[Matter Manager] Could not clear storage directory ${storageDir}:`, err.message);
+      }
+    }
+  }
+
+  async resetNodeForDevice(deviceId) {
+    console.log(`[Matter Manager] Resetting pairing credentials for ${deviceId}...`);
+    const dev = this.discoveredDevices.get(deviceId);
+    if (!dev) {
+      throw new Error(`Device "${deviceId}" not found.`);
+    }
+
+    const sanitizedId = deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const storageDir = path.join(this.config.storagePath, sanitizedId);
+
+    const entry = this.nodes.get(deviceId);
+    if (entry) {
+      try {
+        await entry.node.close();
+      } catch (err) {
+        console.warn(`[Matter Manager] Error while closing node before reset:`, err.message);
+      }
+      this.nodes.delete(deviceId);
+    }
+
+    // Completely erase node's persistent storage to wipe all fabric credentials
+    if (fs.existsSync(storageDir)) {
+      try {
+        fs.rmSync(storageDir, { recursive: true, force: true });
+        console.log(`[Matter Manager] Successfully erased storage for node: ${sanitizedId}`);
+      } catch (err) {
+        console.warn(`[Matter Manager] Could not erase storage directory ${storageDir}:`, err.message);
+      }
+    }
+
+    // Ensure device is marked as enabled in configuration
+    if (!this.enabledConfig[deviceId]) {
+      this.enabledConfig[deviceId] = {
+        enabled: true,
+        port: this.getNextAvailablePort(),
+        discriminator: this.getNextAvailableDiscriminator(),
+      };
+    } else {
+      this.enabledConfig[deviceId].enabled = true;
+    }
+    this.saveEnabledConfig();
+
+    // Start fresh node
+    return await this.startNodeForDevice(deviceId);
   }
 
   async handleHAStateChange(change) {

@@ -568,6 +568,13 @@ body {
   color: var(--text-secondary);
 }
 
+.paired-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .btn-toggle-pairing {
   background: var(--btn-secondary-bg);
   color: var(--text-primary);
@@ -577,7 +584,6 @@ body {
   font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
-  align-self: flex-start;
   transition: all 0.15s ease;
 }
 
@@ -585,6 +591,27 @@ body {
   background: var(--primary-subtle);
   color: var(--primary);
   border-color: var(--primary);
+}
+
+.btn-reset-pairing {
+  background: var(--btn-secondary-bg);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.btn-reset-pairing:hover {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: #f59e0b;
+  color: #fbbf24;
 }
 
 .pairing-drawer {

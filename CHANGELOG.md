@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.3
+
+- **"Reset to Re-pair" Button for Commissioned Nodes**: Added a `🔄 Reset to Re-pair` button on all commissioned device cards and pairing panels. Solves the issue where removing a device in Google Home leaves the local Matter node bonded to the orphaned fabric. Clicking this button immediately factory-resets the node, erases its persistent fabric storage, and generates a fresh QR code and pairing passcode ready to be scanned in Google Home.
+- **Auto-Wipe on Unannounce**: Stopping or unannouncing a device now cleans up its persistent storage directory, ensuring that re-announcing always starts as a clean, uncommissioned node.
+- **Universal Clipboard Fallback**: Fixed the Copy button in the Live Logs viewer and pairing cards. Adds a resilient `execCommand` textarea fallback for Home Assistant Ingress iframes and local HTTP LAN sessions where modern `navigator.clipboard` is restricted.
+
 ## 1.5.2
 
 - **Distinctive Multi-Node Sidebar Icon (`mdi:hub`)**: Replaced `mdi:matter` with `mdi:hub` in the Home Assistant configuration. This differentiates Matter Multi-Node from the official Matter Server add-on on the sidebar (which also uses `mdi:matter`), displaying a star-topology hub with connected satellite nodes to represent multi-node Matter.

@@ -170,7 +170,12 @@ if (btnRefreshLogs) {
 
 if (btnCopyLogs) {
   btnCopyLogs.addEventListener('click', () => {
-    const text = cachedLogs.map((l) => `[${l.time}] [${(l.level || 'info').toUpperCase()}] ${l.message}`).join('\n');
+    let text = '';
+    if (cachedLogs && cachedLogs.length > 0) {
+      text = cachedLogs.map((l) => `[${l.time}] [${(l.level || 'info').toUpperCase()}] ${l.message}`).join('\n');
+    } else if (logsTerminal && logsTerminal.innerText) {
+      text = logsTerminal.innerText;
+    }
     copyToClipboard(text, btnCopyLogs);
   });
 }
@@ -432,9 +437,14 @@ function renderCard(dev) {
               <span class="paired-sub">Matter Node is communicating locally with Google Home.</span>
             </div>
           </div>
-          <button class="btn-toggle-pairing" onclick="togglePairingInfo('${escapeHtml(dev.id)}')">
-            ${isExpanded ? '✕ Hide Pairing QR & Code' : '📱 Show Pairing QR & Code'}
-          </button>
+          <div class="paired-actions-row">
+            <button id="btn-toggle-pairing-${escapeHtml(dev.id)}" class="btn-toggle-pairing" onclick="togglePairingInfo('${escapeHtml(dev.id)}')">
+              ${isExpanded ? '✕ Hide Pairing QR & Code' : '📱 Show Pairing QR & Code'}
+            </button>
+            <button class="btn-reset-pairing" onclick="resetNodePairing('${escapeHtml(dev.id)}', '${escapeHtml(dev.friendlyName)}', this)" title="Reset pairing credentials to pair again as a fresh device">
+              🔄 Reset to Re-pair
+            </button>
+          </div>
           <div id="pairing-info-${escapeHtml(dev.id)}" class="pairing-drawer" style="display: ${isExpanded ? 'block' : 'none'};">
             ${pairingDrawerHtml}
           </div>
@@ -531,20 +541,66 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-window.copyToClipboard = function (text, btn) {
+function fallbackCopyText(text) {
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.top = '0';
+    textArea.style.left = '0';
+    textArea.style.width = '2em';
+    textArea.style.height = '2em';
+    textArea.style.padding = '0';
+    textArea.style.border = 'none';
+    textArea.style.outline = 'none';
+    textArea.style.boxShadow = 'none';
+    textArea.style.background = 'transparent';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    return successful;
+  } catch (err) {
+    console.error('Fallback copy failed:', err);
+    return false;
+  }
+}
+
+window.copyToClipboard = async function (text, btn) {
+  if (!text || text === 'N/A') {
+    const terminal = document.getElementById('logsTerminal');
+    if (terminal && terminal.innerText) {
+      text = terminal.innerText;
+    }
+  }
   if (!text || text === 'N/A') return;
-  navigator.clipboard
-    .writeText(text)
-    .then(() => {
-      const orig = btn.textContent;
-      btn.textContent = 'Copied!';
-      btn.style.background = 'var(--success)';
-      setTimeout(() => {
-        btn.textContent = orig;
-        btn.style.background = '';
-      }, 1500);
-    })
-    .catch((err) => console.error('Copy failed:', err));
+
+  let copied = false;
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch (err) {
+      console.warn('navigator.clipboard failed, attempting fallback:', err);
+      copied = fallbackCopyText(text);
+    }
+  } else {
+    copied = fallbackCopyText(text);
+  }
+
+  if (copied && btn) {
+    const orig = btn.textContent;
+    const origBg = btn.style.background;
+    btn.textContent = 'Copied!';
+    btn.style.background = 'var(--success)';
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.style.background = origBg;
+    }, 1500);
+  } else if (!copied) {
+    window.prompt('Copy to clipboard (Ctrl+C / Cmd+C, Enter):', text);
+  }
 };
 
 window.togglePairingInfo = function (deviceId) {
@@ -557,9 +613,37 @@ window.togglePairingInfo = function (deviceId) {
     expandedPairingInfo.add(deviceId);
     el.style.display = 'block';
   }
-  const btn = el.previousElementSibling;
-  if (btn && btn.classList.contains('btn-toggle-pairing')) {
+  const btn = document.getElementById(`btn-toggle-pairing-${deviceId}`) || el.previousElementSibling;
+  if (btn) {
     btn.textContent = expandedPairingInfo.has(deviceId) ? '✕ Hide Pairing QR & Code' : '📱 Show Pairing QR & Code';
+  }
+};
+
+window.resetNodePairing = async function (deviceId, friendlyName, btn) {
+  const confirmMsg = `Reset Matter pairing for "${friendlyName || deviceId}"?\n\nThis will factory-reset the Matter node, wipe existing Google Home fabric credentials, and generate a fresh QR code and pairing code.`;
+  if (!confirm(confirmMsg)) return;
+
+  btn.disabled = true;
+  const origText = btn.textContent;
+  btn.textContent = 'Resetting...';
+
+  try {
+    const res = await fetch(`${apiBase}/api/nodes/${encodeURIComponent(deviceId)}/reset`, {
+      method: 'POST',
+    });
+    if (res.ok) {
+      expandedPairingInfo.delete(deviceId);
+      await fetchNodes();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(`Failed to reset node: ${data.error || 'Server error'}`);
+    }
+  } catch (err) {
+    console.error('Error resetting node:', err);
+    alert('Network error while resetting node.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
   }
 };
 
