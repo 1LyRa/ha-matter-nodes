@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.8
+
+- **Unified Single-Entity Climate & AC**: Removed the secondary composed `FanDevice` endpoint (Endpoint 2). Because Google Home natively maps and displays fan speed sliders, percentage controls, and Auto/Low/Medium/High modes directly on the primary AC page via Endpoint 1's `FanControlServer`, removing Endpoint 2 prevents Google Home from generating an unwanted separate standalone "Fan" tile in the room. All fan controls, on/off toggles, and temperature controls now live unified inside the single AC card.
+
 ## 1.5.7
 
 - **Child & Auxiliary Entity Suppression**: Automatically identifies and hides secondary configuration controls, child switches, and diagnostic entities from the main device grid. Entities matching child lock (`_child_lock`), alarm controls (`_audible_alarm_enabled`, `_visual_alarm_enabled`, `_alarm_enabled`), direct power toggles (`_raw_power`), LED indicators (`_indicator_light`, `_status_led`, `_led`), and sensor device configuration switches are grouped under their parent device and hidden by default unless actively announced.

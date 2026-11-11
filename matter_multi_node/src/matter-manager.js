@@ -8,7 +8,6 @@ import {
   ColorTemperatureLightDevice,
   ExtendedColorLightDevice,
   ThermostatDevice,
-  FanDevice,
   PumpDevice,
 } from '@matter/main/devices';
 import { PowerSourceServer } from '@matter/main/behaviors/power-source';
@@ -871,7 +870,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.5.7',
+          softwareVersionString: '1.5.8',
         },
       });
 
@@ -882,7 +881,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.5.7',
+            softwareVersionString: '1.5.8',
           },
         });
       } catch (err) {
@@ -1262,25 +1261,6 @@ export class MatterManager {
         const endpoint = await node.add(ThermostatClass, endpointConfig);
         endpoints.thermostat = endpoint;
 
-        // Also add composed FanDevice on Endpoint 2 for controllers expecting a child fan endpoint
-        const FanClass = FanDevice.with(
-          FanControlServer.with(FanControl.Feature.MultiSpeed, FanControl.Feature.Auto)
-        );
-
-        const fanEndpoint = await node.add(FanClass, {
-          id: 'fan',
-          fanControl: {
-            fanMode: currentFM,
-            fanModeSequence: fanSeq,
-            percentSetting: currentPct,
-            percentCurrent: currentPct,
-            speedMax: speedMax,
-            speedSetting: currentSpd,
-            speedCurrent: currentSpd,
-          },
-        });
-        endpoints.fan = fanEndpoint;
-
         let updatingFromHA = false;
         let tempDebounceTimer = null;
         const pendingSetpoints = {};
@@ -1352,14 +1332,10 @@ export class MatterManager {
           });
         }
 
-        // Fan Speed & Fan Mode for Google Home (Active on both Endpoint 1 & Endpoint 2)
+        // Fan Speed & Fan Mode for Google Home (Native on Thermostat Endpoint)
         let fanDebounceTimer = null;
-        const fanSources = [endpoint, fanEndpoint].filter(Boolean);
-
-        for (const fEp of fanSources) {
-          if (!fEp.events?.fanControl) continue;
-
-          const fanModeEvent = fEp.events.fanControl.events?.fanMode$Changed || fEp.events.fanControl.events?.fanMode$Changing;
+        if (endpoint.events?.fanControl) {
+          const fanModeEvent = endpoint.events.fanControl.events?.fanMode$Changed || endpoint.events.fanControl.events?.fanMode$Changing;
           if (fanModeEvent) {
             fanModeEvent.on(async (newMode) => {
               if (updatingFromHA) return;
@@ -1386,12 +1362,12 @@ export class MatterManager {
             }, 100);
           };
 
-          const pctEvent = fEp.events.fanControl.events?.percentSetting$Changing || fEp.events.fanControl.events?.percentSetting$Changed;
+          const pctEvent = endpoint.events.fanControl.events?.percentSetting$Changing || endpoint.events.fanControl.events?.percentSetting$Changed;
           if (pctEvent) {
             pctEvent.on(handleSpeedPercentChange);
           }
 
-          const spdEvent = fEp.events.fanControl.events?.speedSetting$Changing || fEp.events.fanControl.events?.speedSetting$Changed;
+          const spdEvent = endpoint.events.fanControl.events?.speedSetting$Changing || endpoint.events.fanControl.events?.speedSetting$Changed;
           if (spdEvent) {
             spdEvent.on((spd) => {
               if (updatingFromHA || spd === null || spd === undefined) return;
@@ -1474,9 +1450,6 @@ export class MatterManager {
               if (Object.keys(fcUpdates).length > 0) {
                 if (endpoint.state?.fanControl) {
                   await endpoint.set({ fanControl: fcUpdates });
-                }
-                if (fanEndpoint && fanEndpoint.state?.fanControl) {
-                  await fanEndpoint.set({ fanControl: fcUpdates });
                 }
                 info.fanMode = newDev.fanMode;
               }
