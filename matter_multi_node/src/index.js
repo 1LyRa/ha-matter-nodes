@@ -1,3 +1,4 @@
+import './logger.js';
 import { loadConfig } from './config.js';
 import { HAClient } from './ha-client.js';
 import { MatterManager } from './matter-manager.js';

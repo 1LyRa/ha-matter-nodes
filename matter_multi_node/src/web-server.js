@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getRecentLogs, clearLogs } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,6 +25,15 @@ export function createWebServer(config, matterManager, haClient) {
 
   app.get('/api/nodes', (req, res) => {
     res.json(matterManager.getAllEntitiesInfo());
+  });
+
+  app.get('/api/logs', (req, res) => {
+    res.json({ logs: getRecentLogs() });
+  });
+
+  app.post('/api/logs/clear', (req, res) => {
+    clearLogs();
+    res.json({ ok: true });
   });
 
   app.post('/api/nodes/:deviceId/enable', async (req, res) => {

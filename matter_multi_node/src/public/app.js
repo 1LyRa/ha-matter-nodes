@@ -38,9 +38,17 @@ const countInactive = document.getElementById('countInactive');
 const searchInput = document.getElementById('searchInput');
 const cardsGrid = document.getElementById('cardsGrid');
 const filterTabs = document.querySelectorAll('.tab-btn');
+const logsContainer = document.getElementById('logsContainer');
+const logsTerminal = document.getElementById('logsTerminal');
+const autoScrollCheck = document.getElementById('autoScrollCheck');
+const btnRefreshLogs = document.getElementById('btnRefreshLogs');
+const btnCopyLogs = document.getElementById('btnCopyLogs');
+const btnClearLogs = document.getElementById('btnClearLogs');
 
 let allDevices = [];
 let activeTab = 'all';
+let cachedLogs = [];
+let logsPollTimer = null;
 
 // Tab Switching
 filterTabs.forEach((tab) => {
@@ -48,9 +56,90 @@ filterTabs.forEach((tab) => {
     filterTabs.forEach((t) => t.classList.remove('active'));
     tab.classList.add('active');
     activeTab = tab.getAttribute('data-tab');
-    renderCards();
+
+    if (activeTab === 'logs') {
+      cardsGrid.style.display = 'none';
+      logsContainer.style.display = 'block';
+      if (searchInput && searchInput.parentElement) {
+        searchInput.parentElement.style.display = 'none';
+      }
+      fetchLogs();
+      if (!logsPollTimer) {
+        logsPollTimer = setInterval(fetchLogs, 2500);
+      }
+    } else {
+      cardsGrid.style.display = 'grid';
+      logsContainer.style.display = 'none';
+      if (searchInput && searchInput.parentElement) {
+        searchInput.parentElement.style.display = 'block';
+      }
+      if (logsPollTimer) {
+        clearInterval(logsPollTimer);
+        logsPollTimer = null;
+      }
+      renderCards();
+    }
   });
 });
+
+async function fetchLogs() {
+  try {
+    const res = await fetch(`${apiBase}/api/logs`);
+    if (!res.ok) return;
+    const data = await res.json();
+    cachedLogs = data.logs || [];
+    renderLogs(cachedLogs);
+  } catch (err) {
+    console.error('Failed to fetch logs:', err);
+  }
+}
+
+function renderLogs(logs) {
+  if (!logs || logs.length === 0) {
+    logsTerminal.innerHTML = '<div class="log-loading">No logs recorded in memory yet.</div>';
+    return;
+  }
+
+  const html = logs.map((log) => {
+    const timeStr = log.time ? (log.time.split(' ')[1] || log.time) : '';
+    const lvl = log.level || 'info';
+    return `<div class="log-entry">
+      <span class="log-time">${escapeHtml(timeStr)}</span>
+      <span class="log-badge ${lvl}">[${lvl.toUpperCase()}]</span>
+      <span class="log-text">${escapeHtml(log.message)}</span>
+    </div>`;
+  }).join('');
+
+  logsTerminal.innerHTML = html;
+
+  if (autoScrollCheck && autoScrollCheck.checked) {
+    logsTerminal.scrollTop = logsTerminal.scrollHeight;
+  }
+}
+
+if (btnRefreshLogs) {
+  btnRefreshLogs.addEventListener('click', fetchLogs);
+}
+
+if (btnCopyLogs) {
+  btnCopyLogs.addEventListener('click', () => {
+    const text = cachedLogs.map((l) => `[${l.time}] [${(l.level || 'info').toUpperCase()}] ${l.message}`).join('\n');
+    copyToClipboard(text, btnCopyLogs);
+  });
+}
+
+if (btnClearLogs) {
+  btnClearLogs.addEventListener('click', async () => {
+    if (!confirm('Clear recent logs in memory?')) return;
+    try {
+      await fetch(`${apiBase}/api/logs/clear`, { method: 'POST' });
+      cachedLogs = [];
+      renderLogs([]);
+    } catch (err) {
+      console.error('Failed to clear logs:', err);
+    }
+  });
+}
 
 async function fetchStatus() {
   try {

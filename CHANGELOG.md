@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.2
+
+- **Live Logs Viewer**: Added an integrated "Logs" tab directly in the dashboard with live auto-scroll, color-coded level badges (INFO, WARN, ERROR, DEBUG), one-click clipboard copy, and buffer clearing.
+- **In-Memory Ring Logger**: Lightweight FIFO buffer streaming all Node.js, Matter.js, and WebSocket communication logs without disk I/O overhead.
+- **Matter Server Style Icon (Black on White)**: Updated add-on branding to a high-contrast black-on-white base Matter logo with standalone multi-node satellite accents, styled in harmony with the official Home Assistant Matter Server logo.
+
 ## 1.4.1
 
 - **Fix Light Color Temperature**: Resolved `invalid_format: not a valid option, did you mean 'color_temp_kelvin'?` when adjusting color temperature from Google Home. Migrated service payload from deprecated `color_temp` to Home Assistant's modern `color_temp_kelvin` with bidirectional mireds/Kelvin translation.
