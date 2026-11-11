@@ -9,6 +9,8 @@ import {
   ExtendedColorLightDevice,
   ThermostatDevice,
   PumpDevice,
+  AirPurifierDevice,
+  FanDevice,
 } from '@matter/main/devices';
 import { PowerSourceServer } from '@matter/main/behaviors/power-source';
 import { OnOffServer } from '@matter/main/behaviors/on-off';
@@ -16,7 +18,21 @@ import { FanControlServer } from '@matter/main/behaviors/fan-control';
 import { ThermostatServer } from '@matter/main/behaviors/thermostat';
 import { ThermostatUserInterfaceConfigurationServer } from '@matter/main/behaviors/thermostat-user-interface-configuration';
 import { PumpConfigurationAndControlServer } from '@matter/main/behaviors/pump-configuration-and-control';
-import { Thermostat, FanControl, PumpConfigurationAndControl } from '@matter/main/clusters';
+import { HepaFilterMonitoringServer } from '@matter/main/behaviors/hepa-filter-monitoring';
+import { ActivatedCarbonFilterMonitoringServer } from '@matter/main/behaviors/activated-carbon-filter-monitoring';
+import { AirQualityServer } from '@matter/main/behaviors/air-quality';
+import { Pm25ConcentrationMeasurementServer } from '@matter/main/behaviors/pm25-concentration-measurement';
+import { TemperatureMeasurementServer } from '@matter/main/behaviors/temperature-measurement';
+import { RelativeHumidityMeasurementServer } from '@matter/main/behaviors/relative-humidity-measurement';
+import {
+  Thermostat,
+  FanControl,
+  PumpConfigurationAndControl,
+  HepaFilterMonitoring,
+  ActivatedCarbonFilterMonitoring,
+  AirQuality,
+  Pm25ConcentrationMeasurement,
+} from '@matter/main/clusters';
 import QRCode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
@@ -264,8 +280,10 @@ function getSensorBaseId(entityId) {
 function cleanDeviceFriendlyName(name, deviceName) {
   let str = (name && name.trim()) ? name.trim() : (deviceName || '').trim();
   if (!str) return '';
-  // Strip trailing raw power / raw_power
-  str = str.replace(/\s*[-–—:]?\s*\braw\s*power\b/gi, '').trim();
+  // Strip trailing raw power / power
+  if (str.length > 5) {
+    str = str.replace(/\s*[-–—:]?\s*\b(?:raw\s*power|power)\b$/gi, '').trim();
+  }
   // If words are duplicated e.g. 'Air conditioner Air conditioner' or 'Bedroom fountain Bedroom fountain'
   const words = str.split(/\s+/);
   if (words.length >= 2 && words.length % 2 === 0) {
@@ -286,6 +304,39 @@ function extractSensorBaseFriendly(rawFriendly, deviceName) {
   return cleaned
     .replace(/\s*[-–—:]?\s*(?:Temperature|Humidity|Battery|Battery Level|Battery Voltage|Battery Type|Illuminance|Occupancy|Motion|Presence|Power|Energy|Voltage|Current|temp|humid|bat)(?:\s+\d+)?$/i, '')
     .trim();
+}
+
+function isAirPurifier(entityId, stateObj) {
+  if (!entityId) return false;
+  const lowerId = entityId.toLowerCase();
+  const friendlyName = (stateObj?.attributes?.friendly_name || '').toLowerCase();
+  const patterns = [
+    'purifier', 'air_purifier', 'humidify_cool', 'de_nox', 'formaldehyde',
+    'air_cleaner', 'aircleaner', 'очиститель', 'воздухоочиститель'
+  ];
+  return patterns.some((p) => lowerId.includes(p) || friendlyName.includes(p));
+}
+
+function mapPm25ToMatterAirQuality(pm25, aqiState) {
+  if (typeof aqiState === 'string') {
+    const s = aqiState.toLowerCase();
+    if (s.includes('good') || s === '1') return AirQuality.AirQualityEnum.Good;
+    if (s.includes('fair') || s === '2') return AirQuality.AirQualityEnum.Fair;
+    if (s.includes('moderate') || s === '3') return AirQuality.AirQualityEnum.Moderate;
+    if (s.includes('very poor') || s === '5') return AirQuality.AirQualityEnum.VeryPoor;
+    if (s.includes('extremely poor') || s === '6') return AirQuality.AirQualityEnum.ExtremelyPoor;
+    if (s.includes('poor') || s === '4') return AirQuality.AirQualityEnum.Poor;
+  }
+  if (pm25 !== null && pm25 !== undefined && !isNaN(pm25)) {
+    const v = Number(pm25);
+    if (v <= 12) return AirQuality.AirQualityEnum.Good;
+    if (v <= 35) return AirQuality.AirQualityEnum.Fair;
+    if (v <= 55) return AirQuality.AirQualityEnum.Moderate;
+    if (v <= 150) return AirQuality.AirQualityEnum.Poor;
+    if (v <= 250) return AirQuality.AirQualityEnum.VeryPoor;
+    return AirQuality.AirQualityEnum.ExtremelyPoor;
+  }
+  return AirQuality.AirQualityEnum.Good;
 }
 
 function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, haClient) {
@@ -419,7 +470,7 @@ function findParentDeviceId(entityId, regEntry, allStatesMap, haClient) {
     for (const [eId, reg] of haClient.entityRegistry.entries()) {
       if (reg.device_id === regEntry.device_id && eId !== entityId) {
         const otherDomain = eId.split('.')[0];
-        if (['climate', 'light', 'switch'].includes(otherDomain) && reg.entity_category !== 'config' && reg.entity_category !== 'diagnostic') {
+        if (['climate', 'light', 'switch', 'binary_sensor', 'sensor'].includes(otherDomain) && reg.entity_category !== 'config' && reg.entity_category !== 'diagnostic') {
           return eId;
         }
       }
@@ -429,7 +480,7 @@ function findParentDeviceId(entityId, regEntry, allStatesMap, haClient) {
   // 2. Heuristic base name
   const stripped = baseName.replace(/_(?:child_lock|raw_power|indicator(?:_light)?|status_led|led|backlight|buzzer|alarm_enabled|audible_alarm_enabled|visual_alarm_enabled|power_outage_memory)(?:_\d+)?$/i, '');
   if (stripped !== baseName) {
-    for (const d of ['switch', 'light', 'climate']) {
+    for (const d of ['switch', 'light', 'climate', 'binary_sensor', 'sensor']) {
       const candidate = `${d}.${stripped}`;
       if (allStatesMap && allStatesMap.has(candidate)) {
         return candidate;
@@ -442,7 +493,7 @@ function findParentDeviceId(entityId, regEntry, allStatesMap, haClient) {
     for (const candidate of allStatesMap.keys()) {
       if (candidate !== entityId) {
         const candBase = candidate.split('.')[1] || '';
-        if (candBase && baseName.startsWith(candBase) && (baseName.includes('raw_power') || baseName.includes('child_lock'))) {
+        if (candBase && baseName.startsWith(candBase) && (baseName.includes('raw_power') || baseName.includes('child_lock') || baseName.includes('alarm_enabled'))) {
           return candidate;
         }
       }
@@ -613,9 +664,158 @@ export class MatterManager {
     const primaryBaseIds = new Set();
     const rawLights = [];
     const rawSensors = [];
+    const handledPurifierEntities = new Set();
+    const purifierGroups = new Map();
+
+    // 0. Discover and Group Air Purifiers
+    for (const [entityId, stateObj] of statesMap.entries()) {
+      if (!this.shouldIncludeEntity(entityId)) continue;
+      if (isAirPurifier(entityId, stateObj)) {
+        const reg = this.haClient?.entityRegistry?.get(entityId);
+        const groupKey = reg?.device_id
+          ? `dev_${reg.device_id}`
+          : entityId.split('.')[1].replace(/_(?:power|auto_mode|auto|oscillation|night_mode|continuous_monitoring|speed|temperature|temp|humidity|humid|pm25|pm2_5|pm10|voc|nitrogen_dioxide|nox_level|nox_index|aqi|air_quality|hepa_filter_life|carbon_filter_life|filter_life)(?:_\d+)?$/i, '');
+        if (!purifierGroups.has(groupKey)) {
+          purifierGroups.set(groupKey, {
+            groupKey,
+            deviceId: reg?.device_id || null,
+            items: [],
+          });
+        }
+        purifierGroups.get(groupKey).items.push({ entityId, stateObj, reg });
+      }
+    }
+
+    // Include any remaining companion entities on the same purifier device
+    const purifierDeviceIds = new Set();
+    for (const grp of purifierGroups.values()) {
+      if (grp.deviceId) purifierDeviceIds.add(grp.deviceId);
+    }
+
+    if (purifierDeviceIds.size > 0 && this.haClient?.entityRegistry) {
+      for (const [entityId, stateObj] of statesMap.entries()) {
+        const reg = this.haClient.entityRegistry.get(entityId);
+        if (reg?.device_id && purifierDeviceIds.has(reg.device_id)) {
+          const groupKey = `dev_${reg.device_id}`;
+          if (purifierGroups.has(groupKey)) {
+            const grp = purifierGroups.get(groupKey);
+            if (!grp.items.some((it) => it.entityId === entityId)) {
+              grp.items.push({ entityId, stateObj, reg });
+            }
+          }
+        }
+      }
+    }
+
+    for (const [groupKey, grp] of purifierGroups.entries()) {
+      let fanEntity = null;
+      let powerEntity = null;
+      let autoEntity = null;
+      let oscillationEntity = null;
+      let nightEntity = null;
+      let tempEntity = null;
+      let humidEntity = null;
+      let pm25Entity = null;
+      let pm10Entity = null;
+      let vocEntity = null;
+      let noxEntity = null;
+      let aqiEntity = null;
+      let hepaEntity = null;
+      let carbonEntity = null;
+
+      for (const item of grp.items) {
+        handledPurifierEntities.add(item.entityId);
+        const id = item.entityId;
+        const dom = id.split('.')[0];
+        const s = item.stateObj;
+        const dc = s.attributes?.device_class;
+
+        if (dom === 'fan') fanEntity = id;
+        if (dom === 'switch') {
+          if (/_(?:power|raw_power)(?:_\d+)?$/i.test(id)) powerEntity = id;
+          else if (/_(?:auto_mode|auto)(?:_\d+)?$/i.test(id)) autoEntity = id;
+          else if (/_(?:oscillation|oscillate)(?:_\d+)?$/i.test(id)) oscillationEntity = id;
+          else if (/_(?:night_mode|night)(?:_\d+)?$/i.test(id)) nightEntity = id;
+          else if (!powerEntity) powerEntity = id;
+        }
+        if (dom === 'sensor' || dom === 'binary_sensor') {
+          if (dc === 'temperature' || /_(?:temperature|temp)(?:_\d+)?$/i.test(id)) tempEntity = id;
+          else if (dc === 'humidity' || /_(?:relative_humidity|humidity)(?:_\d+)?$/i.test(id)) humidEntity = id;
+          else if (dc === 'pm25' || /_(?:pm2_?5)(?:_\d+)?$/i.test(id)) pm25Entity = id;
+          else if (dc === 'pm10' || /_(?:pm10)(?:_\d+)?$/i.test(id)) pm10Entity = id;
+          else if (dc === 'volatile_organic_compounds' || /_(?:voc|volatile_organic_compounds)(?:_\d+)?$/i.test(id)) vocEntity = id;
+          else if (dc === 'nitrogen_dioxide' || /_(?:nitrogen_dioxide|nox|no2)(?:_\d+)?$/i.test(id)) noxEntity = id;
+          else if (dc === 'aqi' || /_(?:aqi|air_quality)(?:_\d+)?$/i.test(id)) aqiEntity = id;
+          else if (/_(?:carbon_filter|carbon_filter_life|carbon)(?:_\d+)?$/i.test(id)) carbonEntity = id;
+          else if (/_(?:hepa_filter|hepa_filter_life|hepa|filter_life|filter)(?:_\d+)?$/i.test(id)) hepaEntity = id;
+        }
+      }
+
+      const primaryId = fanEntity || powerEntity || grp.items[0].entityId;
+      const primaryItem = grp.items.find((it) => it.entityId === primaryId) || grp.items[0];
+      const devReg = grp.deviceId ? this.haClient?.deviceRegistry?.get(grp.deviceId) : null;
+      const rawFriendly = primaryItem.stateObj.attributes?.friendly_name || primaryId;
+      const friendlyName = cleanDeviceFriendlyName(rawFriendly, devReg?.name_by_user || devReg?.name);
+
+      const fanState = fanEntity ? statesMap.get(fanEntity) : null;
+      const powerState = powerEntity ? statesMap.get(powerEntity) : null;
+      const isOn = fanState ? (fanState.state === 'on') : (powerState ? (powerState.state === 'on') : false);
+      const percentage = fanState?.attributes?.percentage ?? null;
+      const presetModes = fanState?.attributes?.preset_modes || [];
+      const fanMode = fanState?.attributes?.preset_mode || (autoEntity && statesMap.get(autoEntity)?.state === 'on' ? 'auto' : null);
+
+      const tempVal = tempEntity && !isNaN(parseFloat(statesMap.get(tempEntity)?.state)) ? parseFloat(statesMap.get(tempEntity).state) : null;
+      const humidVal = humidEntity && !isNaN(parseFloat(statesMap.get(humidEntity)?.state)) ? parseFloat(statesMap.get(humidEntity).state) : null;
+      const pm25Val = pm25Entity && !isNaN(parseFloat(statesMap.get(pm25Entity)?.state)) ? parseFloat(statesMap.get(pm25Entity).state) : null;
+      const aqiVal = aqiEntity ? statesMap.get(aqiEntity)?.state : null;
+      const hepaVal = hepaEntity && !isNaN(parseFloat(statesMap.get(hepaEntity)?.state)) ? parseFloat(statesMap.get(hepaEntity).state) : null;
+      const carbonVal = carbonEntity && !isNaN(parseFloat(statesMap.get(carbonEntity)?.state)) ? parseFloat(statesMap.get(carbonEntity).state) : null;
+      const tempUnit = (tempEntity && statesMap.get(tempEntity)?.attributes?.unit_of_measurement) || '°C';
+
+      this.discoveredDevices.set(primaryId, {
+        id: primaryId,
+        domain: 'fan',
+        deviceKind: 'purifier',
+        friendlyName,
+        entityId: primaryId,
+        fanEntity,
+        powerEntity,
+        autoEntity,
+        oscillationEntity,
+        nightEntity,
+        tempEntity,
+        humidEntity,
+        pm25Entity,
+        pm10Entity,
+        vocEntity,
+        noxEntity,
+        aqiEntity,
+        hepaEntity,
+        carbonEntity,
+        isOn,
+        percentage,
+        presetModes,
+        fanMode,
+        temperature: tempVal,
+        humidity: humidVal,
+        pm25: pm25Val,
+        airQuality: aqiVal,
+        hepaFilter: hepaVal,
+        carbonFilter: carbonVal,
+        tempUnit,
+        isSubEntity: false,
+      });
+
+      for (const item of grp.items) {
+        this.entityToDeviceId.set(item.entityId, primaryId);
+      }
+    }
 
     for (const [entityId, stateObj] of statesMap.entries()) {
       if (!this.shouldIncludeEntity(entityId)) {
+        continue;
+      }
+      if (handledPurifierEntities.has(entityId)) {
         continue;
       }
 
@@ -796,6 +996,40 @@ export class MatterManager {
         }
         if (companionSelectFan) {
           this.entityToDeviceId.set(companionSelectFan, entityId);
+        }
+      }
+
+      // 3b. Process Standalone Fans
+      if (domain === 'fan') {
+        if (handledPurifierEntities.has(entityId) || this.entityToDeviceId.has(entityId)) {
+          continue;
+        }
+        const rawFriendly = stateObj.attributes?.friendly_name || entityId;
+        const regDeviceName = reg?.device_id ? this.haClient?.deviceRegistry?.get(reg.device_id)?.name : null;
+        const friendlyName = cleanDeviceFriendlyName(rawFriendly, regDeviceName);
+        const isOn = stateObj.state === 'on';
+        const percentage = stateObj.attributes?.percentage ?? null;
+        const fanMode = stateObj.attributes?.preset_mode ?? null;
+        const presetModes = stateObj.attributes?.preset_modes || [];
+        const isSub = isChildOrAuxiliaryEntity(entityId, stateObj, reg, statesMap, this.haClient);
+        const isAnnounced = this.enabledConfig[entityId]?.enabled === true || this.nodes.has(entityId);
+
+        if (!isSub || this.showAllSensors || isAnnounced) {
+          this.discoveredDevices.set(entityId, {
+            id: entityId,
+            domain: 'fan',
+            deviceKind: 'fan',
+            friendlyName,
+            isOn,
+            percentage,
+            fanMode,
+            presetModes,
+            entityId,
+            isSubEntity: isSub,
+          });
+          if (!this.entityToDeviceId.has(entityId)) {
+            this.entityToDeviceId.set(entityId, entityId);
+          }
         }
       }
 
@@ -1139,6 +1373,10 @@ export class MatterManager {
 
       if (dev.deviceKind === 'pump') {
         primaryDeviceType = PumpDevice.deviceType;
+      } else if (dev.deviceKind === 'purifier') {
+        primaryDeviceType = AirPurifierDevice.deviceType;
+      } else if (dev.deviceKind === 'fan') {
+        primaryDeviceType = FanDevice.deviceType;
       } else if (dev.deviceKind === 'switch') {
         primaryDeviceType = OnOffPlugInUnitDevice.deviceType;
       } else if (dev.deviceKind === 'light') {
@@ -1185,7 +1423,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.6.2',
+          softwareVersionString: '1.7.0',
         },
       });
 
@@ -1196,13 +1434,14 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.6.2',
+            softwareVersionString: '1.7.0',
           },
         });
       } catch (err) {
         // Ignored if uninitialized
       }
 
+      let info = null;
       const endpoints = {};
       let updateFromHA = async () => {};
 
@@ -1961,6 +2200,369 @@ export class MatterManager {
             updatingFromHA = false;
           }
         };
+      } else if (dev.deviceKind === 'purifier') {
+        const behaviors = [
+          OnOffServer,
+          FanControlServer.with(FanControl.Feature.MultiSpeed, FanControl.Feature.Auto),
+          AirQualityServer,
+          Pm25ConcentrationMeasurementServer.with(Pm25ConcentrationMeasurement.Feature.NumericMeasurement),
+        ];
+
+        if (dev.hepaEntity || dev.hepaFilter !== null) {
+          behaviors.push(HepaFilterMonitoringServer);
+        }
+        if (dev.carbonEntity || dev.carbonFilter !== null) {
+          behaviors.push(ActivatedCarbonFilterMonitoringServer);
+        }
+        if (dev.tempEntity) {
+          behaviors.push(TemperatureMeasurementServer);
+        }
+        if (dev.humidEntity) {
+          behaviors.push(RelativeHumidityMeasurementServer);
+        }
+
+        const PurifierClass = AirPurifierDevice.with(...behaviors);
+
+        const currentPct = dev.percentage ?? (dev.isOn ? 100 : 0);
+        const currentSpd = Math.max(1, Math.min(10, Math.round(currentPct / 10)));
+        const isAuto = dev.fanMode?.toLowerCase() === 'auto';
+        const currentFM = isAuto ? FanControl.FanMode.Auto : (dev.isOn ? FanControl.FanMode.High : FanControl.FanMode.Off);
+
+        const epConfig = {
+          id: 'purifier',
+          onOff: { onOff: !!dev.isOn },
+          fanControl: {
+            fanMode: currentFM,
+            fanModeSequence: FanControl.FanModeSequence.OffLowMedHighAuto,
+            percentSetting: currentPct,
+            percentCurrent: currentPct,
+            speedMax: 10,
+            speedSetting: currentSpd,
+            speedCurrent: currentSpd,
+          },
+          airQuality: {
+            airQuality: mapPm25ToMatterAirQuality(dev.pm25, dev.airQuality),
+          },
+          pm25ConcentrationMeasurement: {
+            measuredValue: dev.pm25 !== null ? Math.max(0, Math.min(1000, dev.pm25)) : 0,
+            minMeasuredValue: 0,
+            maxMeasuredValue: 1000,
+            measurementMedium: 0, // Air
+            measurementUnit: 4, // µg/m³
+          },
+        };
+
+        if (dev.hepaEntity || dev.hepaFilter !== null) {
+          const hVal = dev.hepaFilter !== null ? Math.max(0, Math.min(100, Math.round(dev.hepaFilter))) : 100;
+          epConfig.hepaFilterMonitoring = {
+            condition: hVal,
+            degradationDirection: 1, // Down
+            changeIndication: hVal <= 10 ? 2 : (hVal <= 20 ? 1 : 0),
+            inPlaceIndicator: true,
+          };
+        }
+
+        if (dev.carbonEntity || dev.carbonFilter !== null) {
+          const cVal = dev.carbonFilter !== null ? Math.max(0, Math.min(100, Math.round(dev.carbonFilter))) : 100;
+          epConfig.activatedCarbonFilterMonitoring = {
+            condition: cVal,
+            degradationDirection: 1, // Down
+            changeIndication: cVal <= 10 ? 2 : (cVal <= 20 ? 1 : 0),
+            inPlaceIndicator: true,
+          };
+        }
+
+        if (dev.tempEntity) {
+          epConfig.temperatureMeasurement = {
+            measuredValue: convertTemperatureToMatter(dev.temperature, dev.tempUnit) ?? 2100,
+            minMeasuredValue: -4000,
+            maxMeasuredValue: 10000,
+          };
+        }
+
+        if (dev.humidEntity) {
+          epConfig.relativeHumidityMeasurement = {
+            measuredValue: convertHumidityToMatter(dev.humidity) ?? 5000,
+            minMeasuredValue: 0,
+            maxMeasuredValue: 10000,
+          };
+        }
+
+        const endpoint = await node.add(PurifierClass, epConfig);
+        endpoints.purifier = endpoint;
+
+        let updatingFromHA = false;
+        let fanDebounceTimer = null;
+
+        const sendPurifierPower = async (turnOn) => {
+          if (updatingFromHA) return;
+          console.log(`[Matter Node: ${dev.friendlyName}] Purifier power command: ${turnOn ? 'ON' : 'OFF'}`);
+          dev.isOn = turnOn;
+          if (info) info.isOn = turnOn;
+          if (dev.fanEntity) {
+            await this.haClient.setEntityState(dev.fanEntity, turnOn);
+          } else if (dev.powerEntity) {
+            await this.haClient.setEntityState(dev.powerEntity, turnOn);
+          }
+        };
+
+        const onOffEvent = endpoint.events.onOff?.events?.onOff$Changed || endpoint.events.onOff?.events?.onOff$Changing;
+        if (onOffEvent) {
+          onOffEvent.on(sendPurifierPower);
+        }
+
+        const applyFanSpeed = async (pct) => {
+          if (updatingFromHA || pct === null || pct === undefined) return;
+          console.log(`[Matter Node: ${dev.friendlyName}] Purifier set speed: ${pct}%`);
+          dev.percentage = pct;
+          if (info) info.percentage = pct;
+          if (pct > 0 && !dev.isOn) {
+            dev.isOn = true;
+            if (info) info.isOn = true;
+          }
+          if (pct >= 45 && pct <= 55 && dev.autoEntity) {
+            await this.haClient.setEntityState(dev.autoEntity, true);
+            return;
+          }
+          if (dev.fanEntity) {
+            await this.haClient.callService('fan', 'set_percentage', dev.fanEntity, { percentage: pct });
+          }
+        };
+
+        if (endpoint.events?.fanControl) {
+          const pctEvent = endpoint.events.fanControl.events?.percentSetting$Changing || endpoint.events.fanControl.events?.percentSetting$Changed;
+          if (pctEvent) {
+            pctEvent.on((pct) => {
+              if (updatingFromHA) return;
+              if (fanDebounceTimer) clearTimeout(fanDebounceTimer);
+              fanDebounceTimer = setTimeout(() => {
+                fanDebounceTimer = null;
+                applyFanSpeed(pct);
+              }, 120);
+            });
+          }
+
+          const spdEvent = endpoint.events.fanControl.events?.speedSetting$Changing || endpoint.events.fanControl.events?.speedSetting$Changed;
+          if (spdEvent) {
+            spdEvent.on((spd) => {
+              if (updatingFromHA || spd === null || spd === undefined) return;
+              const pct = Math.max(0, Math.min(100, Math.round((spd / 10) * 100)));
+              if (fanDebounceTimer) clearTimeout(fanDebounceTimer);
+              fanDebounceTimer = setTimeout(() => {
+                fanDebounceTimer = null;
+                applyFanSpeed(pct);
+              }, 120);
+            });
+          }
+
+          const modeEvent = endpoint.events.fanControl.events?.fanMode$Changed || endpoint.events.fanControl.events?.fanMode$Changing;
+          if (modeEvent) {
+            modeEvent.on(async (mode) => {
+              if (updatingFromHA) return;
+              if (mode === FanControl.FanMode.Auto) {
+                console.log(`[Matter Node: ${dev.friendlyName}] Purifier fanMode: AUTO`);
+                if (dev.autoEntity) {
+                  await this.haClient.setEntityState(dev.autoEntity, true);
+                } else if (dev.fanEntity) {
+                  try {
+                    await this.haClient.callService('fan', 'set_preset_mode', dev.fanEntity, { preset_mode: 'Auto' });
+                  } catch (err) {
+                    await applyFanSpeed(50);
+                  }
+                }
+              } else if (mode === FanControl.FanMode.Off) {
+                await sendPurifierPower(false);
+              }
+            });
+          }
+        }
+
+        updateFromHA = async (newDev) => {
+          updatingFromHA = true;
+          try {
+            if (endpoint.state.onOff.onOff !== newDev.isOn) {
+              await endpoint.set({ onOff: { onOff: newDev.isOn } });
+              if (info) info.isOn = newDev.isOn;
+            }
+
+            if (newDev.percentage !== null && newDev.percentage !== undefined && endpoint.state?.fanControl) {
+              const spd = Math.max(1, Math.min(10, Math.round(newDev.percentage / 10)));
+              const fcUpdates = {};
+              if (endpoint.state.fanControl.percentSetting !== newDev.percentage) {
+                fcUpdates.percentSetting = newDev.percentage;
+                fcUpdates.percentCurrent = newDev.percentage;
+              }
+              if (endpoint.state.fanControl.speedSetting !== spd) {
+                fcUpdates.speedSetting = spd;
+                fcUpdates.speedCurrent = spd;
+              }
+              if (Object.keys(fcUpdates).length > 0) {
+                await endpoint.set({ fanControl: fcUpdates });
+                if (info) info.percentage = newDev.percentage;
+              }
+            }
+
+            if (newDev.fanMode && endpoint.state?.fanControl) {
+              const targetFM = newDev.fanMode.toLowerCase() === 'auto'
+                ? FanControl.FanMode.Auto
+                : (newDev.isOn ? FanControl.FanMode.High : FanControl.FanMode.Off);
+              if (endpoint.state.fanControl.fanMode !== targetFM) {
+                await endpoint.set({ fanControl: { fanMode: targetFM } });
+                if (info) info.fanMode = newDev.fanMode;
+              }
+            }
+
+            if (endpoint.behaviors.supported.hepaFilterMonitoring && newDev.hepaFilter !== null) {
+              const hVal = Math.max(0, Math.min(100, Math.round(newDev.hepaFilter)));
+              const chg = hVal <= 10 ? 2 : (hVal <= 20 ? 1 : 0);
+              await endpoint.set({
+                hepaFilterMonitoring: {
+                  condition: hVal,
+                  changeIndication: chg,
+                },
+              });
+              if (info) info.hepaFilter = newDev.hepaFilter;
+            }
+
+            if (endpoint.behaviors.supported.activatedCarbonFilterMonitoring && newDev.carbonFilter !== null) {
+              const cVal = Math.max(0, Math.min(100, Math.round(newDev.carbonFilter)));
+              const chg = cVal <= 10 ? 2 : (cVal <= 20 ? 1 : 0);
+              await endpoint.set({
+                activatedCarbonFilterMonitoring: {
+                  condition: cVal,
+                  changeIndication: chg,
+                },
+              });
+              if (info) info.carbonFilter = newDev.carbonFilter;
+            }
+
+            if (endpoint.behaviors.supported.pm25ConcentrationMeasurement && newDev.pm25 !== null) {
+              const pVal = Math.max(0, Math.min(1000, newDev.pm25));
+              await endpoint.set({
+                pm25ConcentrationMeasurement: { measuredValue: pVal },
+              });
+              if (info) info.pm25 = newDev.pm25;
+            }
+
+            if (endpoint.behaviors.supported.airQuality) {
+              const aq = mapPm25ToMatterAirQuality(newDev.pm25, newDev.airQuality);
+              await endpoint.set({ airQuality: { airQuality: aq } });
+              if (info) info.airQuality = newDev.airQuality;
+            }
+
+            if (endpoint.behaviors.supported.temperatureMeasurement && newDev.temperature !== null) {
+              const mTemp = convertTemperatureToMatter(newDev.temperature, newDev.tempUnit);
+              if (mTemp !== null) {
+                await endpoint.set({ temperatureMeasurement: { measuredValue: mTemp } });
+                if (info) info.temperature = newDev.temperature;
+              }
+            }
+
+            if (endpoint.behaviors.supported.relativeHumidityMeasurement && newDev.humidity !== null) {
+              const mHumid = convertHumidityToMatter(newDev.humidity);
+              if (mHumid !== null) {
+                await endpoint.set({ relativeHumidityMeasurement: { measuredValue: mHumid } });
+                if (info) info.humidity = newDev.humidity;
+              }
+            }
+          } finally {
+            updatingFromHA = false;
+          }
+        };
+      } else if (dev.deviceKind === 'fan') {
+        const FanClass = FanDevice.with(
+          OnOffServer,
+          FanControlServer.with(FanControl.Feature.MultiSpeed, FanControl.Feature.Auto)
+        );
+
+        const currentPct = dev.percentage ?? (dev.isOn ? 100 : 0);
+        const currentSpd = Math.max(1, Math.min(10, Math.round(currentPct / 10)));
+        const isAuto = dev.fanMode?.toLowerCase() === 'auto';
+        const currentFM = isAuto ? FanControl.FanMode.Auto : (dev.isOn ? FanControl.FanMode.High : FanControl.FanMode.Off);
+
+        const endpoint = await node.add(FanClass, {
+          id: 'fan',
+          onOff: { onOff: !!dev.isOn },
+          fanControl: {
+            fanMode: currentFM,
+            fanModeSequence: FanControl.FanModeSequence.OffLowMedHighAuto,
+            percentSetting: currentPct,
+            percentCurrent: currentPct,
+            speedMax: 10,
+            speedSetting: currentSpd,
+            speedCurrent: currentSpd,
+          },
+        });
+        endpoints.fan = endpoint;
+
+        let updatingFromHA = false;
+        let fanDebounceTimer = null;
+
+        const onOffEvent = endpoint.events.onOff?.events?.onOff$Changed || endpoint.events.onOff?.events?.onOff$Changing;
+        if (onOffEvent) {
+          onOffEvent.on(async (newValue) => {
+            if (updatingFromHA) return;
+            console.log(`[Matter Node: ${dev.friendlyName}] Fan onOff command: ${newValue ? 'ON' : 'OFF'}`);
+            dev.isOn = newValue;
+            if (info) info.isOn = newValue;
+            await this.haClient.setEntityState(dev.entityId, newValue);
+          });
+        }
+
+        const handleFanSpeedChange = (pct) => {
+          if (updatingFromHA || pct === null || pct === undefined) return;
+          if (fanDebounceTimer) clearTimeout(fanDebounceTimer);
+          fanDebounceTimer = setTimeout(async () => {
+            fanDebounceTimer = null;
+            console.log(`[Matter Node: ${dev.friendlyName}] Fan speed command: ${pct}%`);
+            dev.percentage = pct;
+            if (info) info.percentage = pct;
+            await this.haClient.callService('fan', 'set_percentage', dev.entityId, { percentage: pct });
+          }, 100);
+        };
+
+        if (endpoint.events?.fanControl) {
+          const pctEvent = endpoint.events.fanControl.events?.percentSetting$Changing || endpoint.events.fanControl.events?.percentSetting$Changed;
+          if (pctEvent) {
+            pctEvent.on(handleFanSpeedChange);
+          }
+          const spdEvent = endpoint.events.fanControl.events?.speedSetting$Changing || endpoint.events.fanControl.events?.speedSetting$Changed;
+          if (spdEvent) {
+            spdEvent.on((spd) => {
+              if (updatingFromHA || spd === null || spd === undefined) return;
+              const pct = Math.max(0, Math.min(100, Math.round((spd / 10) * 100)));
+              handleFanSpeedChange(pct);
+            });
+          }
+        }
+
+        updateFromHA = async (newDev) => {
+          updatingFromHA = true;
+          try {
+            if (endpoint.state.onOff.onOff !== newDev.isOn) {
+              await endpoint.set({ onOff: { onOff: newDev.isOn } });
+              if (info) info.isOn = newDev.isOn;
+            }
+            if (newDev.percentage !== null && newDev.percentage !== undefined && endpoint.state?.fanControl) {
+              const spd = Math.max(1, Math.min(10, Math.round(newDev.percentage / 10)));
+              const fcUpdates = {};
+              if (endpoint.state.fanControl.percentSetting !== newDev.percentage) {
+                fcUpdates.percentSetting = newDev.percentage;
+                fcUpdates.percentCurrent = newDev.percentage;
+              }
+              if (endpoint.state.fanControl.speedSetting !== spd) {
+                fcUpdates.speedSetting = spd;
+                fcUpdates.speedCurrent = spd;
+              }
+              if (Object.keys(fcUpdates).length > 0) {
+                await endpoint.set({ fanControl: fcUpdates });
+                if (info) info.percentage = newDev.percentage;
+              }
+            }
+          } finally {
+            updatingFromHA = false;
+          }
+        };
       }
 
       const pairingCodes = node.state.commissioning.pairingCodes || {};
@@ -1980,7 +2582,7 @@ export class MatterManager {
         }
       }
 
-      const info = {
+      info = {
         id: deviceId,
         entityId: dev.entityId || deviceId,
         friendlyName: dev.friendlyName,
@@ -1995,6 +2597,11 @@ export class MatterManager {
         supportedModes: dev.supportedModes || [],
         fanModes: dev.fanModes || [],
         fanMode: dev.fanMode || null,
+        percentage: dev.percentage ?? null,
+        pm25: dev.pm25 ?? null,
+        airQuality: dev.airQuality ?? null,
+        hepaFilter: dev.hepaFilter ?? null,
+        carbonFilter: dev.carbonFilter ?? null,
         port,
         discriminator,
         passcode: this.config.passcode,
@@ -2218,6 +2825,47 @@ export class MatterManager {
       } else if (entity_id === dev.batEntity) {
         dev.battery = isNaN(numVal) ? null : numVal;
       }
+    } else if (dev.deviceKind === 'purifier') {
+      if (entity_id === dev.fanEntity) {
+        dev.isOn = change.state === true || change.raw_state === 'on';
+        if (change.attributes?.percentage !== undefined) {
+          dev.percentage = change.attributes.percentage;
+        }
+        if (change.attributes?.preset_mode !== undefined) {
+          dev.fanMode = change.attributes.preset_mode;
+        }
+      } else if (entity_id === dev.powerEntity) {
+        dev.isOn = change.state === true || change.raw_state === 'on';
+      } else if (entity_id === dev.autoEntity) {
+        if (change.state === true || change.raw_state === 'on') {
+          dev.fanMode = 'auto';
+        }
+      } else if (entity_id === dev.tempEntity) {
+        const num = parseFloat(change.raw_state);
+        if (!isNaN(num)) dev.temperature = num;
+      } else if (entity_id === dev.humidEntity) {
+        const num = parseFloat(change.raw_state);
+        if (!isNaN(num)) dev.humidity = num;
+      } else if (entity_id === dev.pm25Entity) {
+        const num = parseFloat(change.raw_state);
+        if (!isNaN(num)) dev.pm25 = num;
+      } else if (entity_id === dev.aqiEntity) {
+        dev.airQuality = change.raw_state;
+      } else if (entity_id === dev.hepaEntity) {
+        const num = parseFloat(change.raw_state);
+        if (!isNaN(num)) dev.hepaFilter = num;
+      } else if (entity_id === dev.carbonEntity) {
+        const num = parseFloat(change.raw_state);
+        if (!isNaN(num)) dev.carbonFilter = num;
+      }
+    } else if (dev.deviceKind === 'fan') {
+      dev.isOn = change.state === true || change.raw_state === 'on';
+      if (change.attributes?.percentage !== undefined) {
+        dev.percentage = change.attributes.percentage;
+      }
+      if (change.attributes?.preset_mode !== undefined) {
+        dev.fanMode = change.attributes.preset_mode;
+      }
     }
 
     // Update live Matter node if active
@@ -2240,6 +2888,11 @@ export class MatterManager {
           isMultiSensor: !!dev.isMultiSensor,
           isMultiLight: !!dev.isMultiLight,
           channels: dev.channels || [],
+          percentage: activeEntry.info.percentage ?? dev.percentage ?? null,
+          pm25: activeEntry.info.pm25 ?? dev.pm25 ?? null,
+          airQuality: activeEntry.info.airQuality ?? dev.airQuality ?? null,
+          hepaFilter: activeEntry.info.hepaFilter ?? dev.hepaFilter ?? null,
+          carbonFilter: activeEntry.info.carbonFilter ?? dev.carbonFilter ?? null,
           isCommissioned: !!activeEntry.node.lifecycle.isCommissioned,
           isAnnounced: true,
         });
@@ -2265,6 +2918,11 @@ export class MatterManager {
           supportedModes: dev.supportedModes || [],
           fanModes: dev.fanModes || [],
           fanMode: dev.fanMode || null,
+          percentage: dev.percentage ?? null,
+          pm25: dev.pm25 ?? null,
+          airQuality: dev.airQuality ?? null,
+          hepaFilter: dev.hepaFilter ?? null,
+          carbonFilter: dev.carbonFilter ?? null,
           port: savedConfig?.port || null,
           discriminator: savedConfig?.discriminator || null,
           passcode: this.config.passcode,
@@ -2323,7 +2981,17 @@ export class MatterManager {
       }
     }
 
-    if (dev.deviceKind === 'switch' || dev.deviceKind === 'light' || dev.deviceKind === 'pump') {
+    if (dev.deviceKind === 'purifier') {
+      const targetState = !dev.isOn;
+      if (dev.fanEntity) {
+        return await this.haClient.setEntityState(dev.fanEntity, targetState);
+      } else if (dev.powerEntity) {
+        return await this.haClient.setEntityState(dev.powerEntity, targetState);
+      }
+      return false;
+    }
+
+    if (dev.deviceKind === 'switch' || dev.deviceKind === 'light' || dev.deviceKind === 'pump' || dev.deviceKind === 'fan') {
       const newState = !dev.isOn;
       return await this.haClient.setEntityState(dev.entityId, newState);
     }

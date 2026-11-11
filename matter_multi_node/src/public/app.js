@@ -280,7 +280,7 @@ async function fetchNodes() {
 
     const switchCount = allDevices.filter((d) => d.deviceKind === 'switch' || d.deviceKind === 'pump').length;
     const lightCount = allDevices.filter((d) => d.deviceKind === 'light').length;
-    const climateCount = allDevices.filter((d) => d.deviceKind === 'climate').length;
+    const climateCount = allDevices.filter((d) => d.deviceKind === 'climate' || d.deviceKind === 'purifier' || d.deviceKind === 'fan').length;
     const sensorCount = allDevices.filter((d) => d.deviceKind === 'sensor').length;
     const activeCount = allDevices.filter((d) => d.isAnnounced).length;
     const inactiveCount = allDevices.length - activeCount;
@@ -304,7 +304,7 @@ function getFilteredDevices(query) {
     // Tab filtering
     if (activeTab === 'switch' && dev.deviceKind !== 'switch' && dev.deviceKind !== 'pump') return false;
     if (activeTab === 'light' && dev.deviceKind !== 'light') return false;
-    if (activeTab === 'climate' && dev.deviceKind !== 'climate') return false;
+    if (activeTab === 'climate' && dev.deviceKind !== 'climate' && dev.deviceKind !== 'purifier' && dev.deviceKind !== 'fan') return false;
     if (activeTab === 'sensor' && dev.deviceKind !== 'sensor') return false;
     if (activeTab === 'active' && !dev.isAnnounced) return false;
     if (activeTab === 'inactive' && dev.isAnnounced) return false;
@@ -400,6 +400,8 @@ function renderCard(dev) {
   const isPump = dev.deviceKind === 'pump';
   const isLight = dev.deviceKind === 'light';
   const isClimate = dev.deviceKind === 'climate';
+  const isPurifier = dev.deviceKind === 'purifier';
+  const isFan = dev.deviceKind === 'fan';
   const isSensor = dev.deviceKind === 'sensor';
   const isPaired = dev.isCommissioned;
   const statusPill = isPaired
@@ -411,6 +413,10 @@ function renderCard(dev) {
   let typePill = '<span class="pill type-badge">Device</span>';
   if (dev.isSubEntity) {
     typePill = '<span class="pill type-badge sub-entity">⚙️ Child / Config</span>';
+  } else if (isPurifier) {
+    typePill = '<span class="pill type-badge purifier">🍃 Air Purifier</span>';
+  } else if (isFan) {
+    typePill = '<span class="pill type-badge fan">💨 Fan</span>';
   } else if (isPump) {
     typePill = '<span class="pill type-badge pump">🌊 Fountain / Pump</span>';
   } else if (isSwitch) {
@@ -442,9 +448,99 @@ function renderCard(dev) {
     formattedCode = `${formattedCode.slice(0, 4)}-${formattedCode.slice(4, 7)}-${formattedCode.slice(7)}`;
   }
 
-  // Metrics block (Sensors, Lights, Climate)
+  // Metrics block (Sensors, Lights, Climate, Purifier, Fan)
   let metricsHtml = '';
-  if (isClimate) {
+  if (isPurifier) {
+    const metrics = [];
+    if (dev.percentage !== null && dev.percentage !== undefined) {
+      metrics.push(`
+        <div class="sensor-metric">
+          <span class="metric-label">Fan Speed</span>
+          <span class="metric-value">💨 ${dev.percentage}%</span>
+        </div>
+      `);
+    } else if (dev.fanMode) {
+      metrics.push(`
+        <div class="sensor-metric">
+          <span class="metric-label">Fan Mode</span>
+          <span class="metric-value" style="text-transform: capitalize;">💨 ${escapeHtml(dev.fanMode)}</span>
+        </div>
+      `);
+    }
+    if (dev.pm25 !== null && dev.pm25 !== undefined) {
+      metrics.push(`
+        <div class="sensor-metric">
+          <span class="metric-label">PM2.5</span>
+          <span class="metric-value">🌫️ ${dev.pm25} µg/m³</span>
+        </div>
+      `);
+    }
+    if (dev.airQuality) {
+      metrics.push(`
+        <div class="sensor-metric">
+          <span class="metric-label">Air Quality</span>
+          <span class="metric-value" style="text-transform: capitalize;">✨ ${escapeHtml(String(dev.airQuality))}</span>
+        </div>
+      `);
+    }
+    if (dev.temperature !== null && dev.temperature !== undefined) {
+      const unit = dev.tempUnit === '°F' || dev.tempUnit === 'F' ? '°F' : '°C';
+      metrics.push(`
+        <div class="sensor-metric">
+          <span class="metric-label">Temperature</span>
+          <span class="metric-value">🌡️ ${dev.temperature}${unit}</span>
+        </div>
+      `);
+    }
+    if (dev.humidity !== null && dev.humidity !== undefined) {
+      metrics.push(`
+        <div class="sensor-metric">
+          <span class="metric-label">Humidity</span>
+          <span class="metric-value">💧 ${dev.humidity}%</span>
+        </div>
+      `);
+    }
+    if (dev.hepaFilter !== null && dev.hepaFilter !== undefined) {
+      metrics.push(`
+        <div class="sensor-metric">
+          <span class="metric-label">HEPA Filter</span>
+          <span class="metric-value">🛡️ ${Math.round(dev.hepaFilter)}%</span>
+        </div>
+      `);
+    }
+    if (dev.carbonFilter !== null && dev.carbonFilter !== undefined) {
+      metrics.push(`
+        <div class="sensor-metric">
+          <span class="metric-label">Carbon Filter</span>
+          <span class="metric-value">⬛ ${Math.round(dev.carbonFilter)}%</span>
+        </div>
+      `);
+    }
+
+    if (metrics.length > 0) {
+      metricsHtml = `<div class="sensor-readings">${metrics.join('')}</div>`;
+    }
+  } else if (isFan) {
+    const metrics = [];
+    if (dev.percentage !== null && dev.percentage !== undefined) {
+      metrics.push(`
+        <div class="sensor-metric">
+          <span class="metric-label">Fan Speed</span>
+          <span class="metric-value">💨 ${dev.percentage}%</span>
+        </div>
+      `);
+    } else if (dev.fanMode) {
+      metrics.push(`
+        <div class="sensor-metric">
+          <span class="metric-label">Fan Mode</span>
+          <span class="metric-value" style="text-transform: capitalize;">💨 ${escapeHtml(dev.fanMode)}</span>
+        </div>
+      `);
+    }
+    if (metrics.length > 0) {
+      metricsHtml = `<div class="sensor-readings">${metrics.join('')}</div>`;
+    }
+  } else if (isClimate) {
     const unit = dev.tempUnit === '°F' || dev.tempUnit === 'F' ? 'F' : 'C';
     const currentStr = dev.currentTemp !== null && dev.currentTemp !== undefined ? `${dev.currentTemp}°${unit}` : '--';
     let targetStr = '--';
@@ -582,7 +678,7 @@ function renderCard(dev) {
   } else {
     bodyContent = `
       <div class="unannounced-box">
-        <p>This ${isPump ? 'fountain / pump' : isSwitch ? 'switch' : isLight ? 'light' : isClimate ? 'thermostat / AC' : 'sensor'} is dormant. Announce it to allocate a Matter UDP port and pairing QR code.</p>
+        <p>This ${isPurifier ? 'air purifier' : isFan ? 'fan' : isPump ? 'fountain / pump' : isSwitch ? 'switch' : isLight ? 'light' : isClimate ? 'thermostat / AC' : 'sensor'} is dormant. Announce it to allocate a Matter UDP port and pairing QR code.</p>
         <button class="btn-announce" onclick="enableAnnouncement('${escapeHtml(dev.id)}', this)">
           ⚡ Announce as Matter Device
         </button>
@@ -625,7 +721,7 @@ function renderCard(dev) {
           .join('')}
       </div>
     `;
-  } else if (isSwitch || isLight || isPump) {
+  } else if (isSwitch || isLight || isPump || isPurifier || isFan) {
     footerContent = `
       <div class="state-indicator">
         <span class="state-dot ${dev.isOn ? 'on' : ''}"></span>

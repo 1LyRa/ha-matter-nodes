@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.0
+
+- **Native Matter AirPurifier Support**: Discovers and unifies air purifiers (including Dyson Purifier Humidify+Cool Formaldehyde De-NOx, Xiaomi, Coway, Levoit) into full-fledged Matter `AirPurifierDevice` (0x002d) nodes. Features discrete fan speed control (`FanControl` with `MultiSpeed` and `Auto`), power toggling (`OnOff`), real-time PM2.5 concentration (`Pm25ConcentrationMeasurement`), air quality level (`AirQuality`), HEPA filter life (`HepaFilterMonitoring`), activated carbon filter life (`ActivatedCarbonFilterMonitoring`), ambient temperature, and relative humidity.
+- **Unified Purifier Entity Grouping**: Automatically groups all companion fan, switch (power, auto mode, oscillation, night mode), and sensor (temperature, humidity, PM2.5, PM10, VOC, NOx, AQI, filter life) entities into a single unified device, preventing companion entities from cluttering the switch and sensor grids.
+- **Sensor Auxiliary Switch & Child Lock Grouping**: Enhanced auxiliary entity matching and parent discovery to recognize sensor alarm switches (e.g. `switch.bathroom_bathroom_leak_sensor_audible_alarm_enabled`, `switch.bathroom_bathroom_leak_sensor_visual_alarm_enabled`) and smart plug child locks (e.g. `switch.eve_energy_*_child_lock`), linking them to their parent device and hiding them from the main grid unless "Show all sensors / auxiliary entities" is toggled in settings.
+- **Standalone Fan Domain Support**: Added native support for standalone Home Assistant `fan.*` entities as Matter `FanDevice` (0x002b) nodes with percentage speed and auto mode control.
+- **Air Purifier Web UI Dashboard**: Added `🍃 Air Purifier` and `💨 Fan` badges to the web dashboard along with real-time fan speed, PM2.5, air quality, temperature, humidity, and filter health cards.
+
 ## 1.6.2
 
 - **Fountain Raw Power Deduplication**: Removed blanket child-exemption for fountains, ensuring raw power auxiliary switches (such as `switch.bedroom_fountain_new_bedroom_fountain_raw_power` and `switch.living_room_fountain_new_living_room_fountain_raw_power`) are recognized as secondary child switches and mapped to their primary parent (`switch.bedroom_fountain` / `switch.living_room_fountain`). Only the clean, primary fountain switch is exposed as a Matter device.
