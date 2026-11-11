@@ -22,6 +22,7 @@ import { HepaFilterMonitoringServer } from '@matter/main/behaviors/hepa-filter-m
 import { ActivatedCarbonFilterMonitoringServer } from '@matter/main/behaviors/activated-carbon-filter-monitoring';
 import { AirQualityServer } from '@matter/main/behaviors/air-quality';
 import { Pm25ConcentrationMeasurementServer } from '@matter/main/behaviors/pm25-concentration-measurement';
+import { Pm10ConcentrationMeasurementServer } from '@matter/main/behaviors/pm10-concentration-measurement';
 import { TemperatureMeasurementServer } from '@matter/main/behaviors/temperature-measurement';
 import { RelativeHumidityMeasurementServer } from '@matter/main/behaviors/relative-humidity-measurement';
 import {
@@ -32,6 +33,7 @@ import {
   ActivatedCarbonFilterMonitoring,
   AirQuality,
   Pm25ConcentrationMeasurement,
+  Pm10ConcentrationMeasurement,
 } from '@matter/main/clusters';
 import QRCode from 'qrcode';
 import fs from 'fs';
@@ -337,6 +339,29 @@ function mapPm25ToMatterAirQuality(pm25, aqiState) {
     return AirQuality.AirQualityEnum.ExtremelyPoor;
   }
   return AirQuality.AirQualityEnum.Good;
+}
+
+function parseFilterLife(stateObj) {
+  if (!stateObj) return null;
+  const raw = String(stateObj.state ?? stateObj.raw_state ?? '').trim().toLowerCase();
+  if (!raw || raw === 'unavailable' || raw === 'unknown') return null;
+
+  const num = parseFloat(raw);
+  if (!isNaN(num)) {
+    const unit = (stateObj.attributes?.unit_of_measurement || '').toLowerCase();
+    if (unit.includes('h') && num > 100) {
+      return Math.max(0, Math.min(100, Math.round((num / 4000) * 100)));
+    }
+    if (unit.includes('d') && num > 100) {
+      return Math.max(0, Math.min(100, Math.round((num / 365) * 100)));
+    }
+    return Math.max(0, Math.min(100, Math.round(num)));
+  }
+
+  if (/^(?:good|ok|normal|clean|fresh)$/i.test(raw)) return 100;
+  if (/^(?:warning|low|replace_soon)$/i.test(raw)) return 20;
+  if (/^(?:replace|expired|bad|change|critical)$/i.test(raw)) return 5;
+  return null;
 }
 
 function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, haClient) {
@@ -739,15 +764,18 @@ export class MatterManager {
           else if (!powerEntity) powerEntity = id;
         }
         if (dom === 'sensor' || dom === 'binary_sensor') {
-          if (dc === 'temperature' || /_(?:temperature|temp)(?:_\d+)?$/i.test(id)) tempEntity = id;
-          else if (dc === 'humidity' || /_(?:relative_humidity|humidity)(?:_\d+)?$/i.test(id)) humidEntity = id;
-          else if (dc === 'pm25' || /_(?:pm2_?5)(?:_\d+)?$/i.test(id)) pm25Entity = id;
-          else if (dc === 'pm10' || /_(?:pm10)(?:_\d+)?$/i.test(id)) pm10Entity = id;
-          else if (dc === 'volatile_organic_compounds' || /_(?:voc|volatile_organic_compounds)(?:_\d+)?$/i.test(id)) vocEntity = id;
-          else if (dc === 'nitrogen_dioxide' || /_(?:nitrogen_dioxide|nox|no2)(?:_\d+)?$/i.test(id)) noxEntity = id;
-          else if (dc === 'aqi' || /_(?:aqi|air_quality)(?:_\d+)?$/i.test(id)) aqiEntity = id;
-          else if (/_(?:carbon_filter|carbon_filter_life|carbon)(?:_\d+)?$/i.test(id)) carbonEntity = id;
-          else if (/_(?:hepa_filter|hepa_filter_life|hepa|filter_life|filter)(?:_\d+)?$/i.test(id)) hepaEntity = id;
+          const lowerId = id.toLowerCase();
+          const friendly = (s.attributes?.friendly_name || '').toLowerCase();
+
+          if (dc === 'temperature' || /_(?:temperature|temp)(?:_\d+)?$/i.test(lowerId) || friendly.includes('temperature')) tempEntity = id;
+          else if (dc === 'humidity' || /_(?:relative_humidity|humidity)(?:_\d+)?$/i.test(lowerId) || (friendly.includes('humidity') && !friendly.includes('purifier') && !friendly.includes('humidify'))) humidEntity = id;
+          else if (dc === 'pm25' || /_(?:pm2_?5)(?:_\d+)?$/i.test(lowerId) || friendly.includes('pm2.5') || friendly.includes('pm25')) pm25Entity = id;
+          else if (dc === 'pm10' || /_(?:pm10)(?:_\d+)?$/i.test(lowerId) || friendly.includes('pm10')) pm10Entity = id;
+          else if (dc === 'volatile_organic_compounds' || /_(?:voc|volatile_organic_compounds)(?:_\d+)?$/i.test(lowerId) || friendly.includes('voc')) vocEntity = id;
+          else if (dc === 'nitrogen_dioxide' || /_(?:nitrogen_dioxide|nox|no2)(?:_\d+)?$/i.test(lowerId) || friendly.includes('nox') || friendly.includes('no2')) noxEntity = id;
+          else if (dc === 'aqi' || /_(?:aqi|air_quality)(?:_\d+)?$/i.test(lowerId) || friendly.includes('aqi') || friendly.includes('air quality')) aqiEntity = id;
+          else if (lowerId.includes('carbon') || friendly.includes('carbon')) carbonEntity = id;
+          else if (lowerId.includes('filter') || friendly.includes('filter') || lowerId.includes('hepa') || friendly.includes('hepa')) hepaEntity = id;
         }
       }
 
@@ -767,9 +795,10 @@ export class MatterManager {
       const tempVal = tempEntity && !isNaN(parseFloat(statesMap.get(tempEntity)?.state)) ? parseFloat(statesMap.get(tempEntity).state) : null;
       const humidVal = humidEntity && !isNaN(parseFloat(statesMap.get(humidEntity)?.state)) ? parseFloat(statesMap.get(humidEntity).state) : null;
       const pm25Val = pm25Entity && !isNaN(parseFloat(statesMap.get(pm25Entity)?.state)) ? parseFloat(statesMap.get(pm25Entity).state) : null;
+      const pm10Val = pm10Entity && !isNaN(parseFloat(statesMap.get(pm10Entity)?.state)) ? parseFloat(statesMap.get(pm10Entity).state) : null;
       const aqiVal = aqiEntity ? statesMap.get(aqiEntity)?.state : null;
-      const hepaVal = hepaEntity && !isNaN(parseFloat(statesMap.get(hepaEntity)?.state)) ? parseFloat(statesMap.get(hepaEntity).state) : null;
-      const carbonVal = carbonEntity && !isNaN(parseFloat(statesMap.get(carbonEntity)?.state)) ? parseFloat(statesMap.get(carbonEntity).state) : null;
+      const hepaVal = hepaEntity ? parseFilterLife(statesMap.get(hepaEntity)) : null;
+      const carbonVal = carbonEntity ? parseFilterLife(statesMap.get(carbonEntity)) : null;
       const tempUnit = (tempEntity && statesMap.get(tempEntity)?.attributes?.unit_of_measurement) || '°C';
 
       this.discoveredDevices.set(primaryId, {
@@ -799,6 +828,7 @@ export class MatterManager {
         temperature: tempVal,
         humidity: humidVal,
         pm25: pm25Val,
+        pm10: pm10Val,
         airQuality: aqiVal,
         hepaFilter: hepaVal,
         carbonFilter: carbonVal,
@@ -1423,7 +1453,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.7.0',
+          softwareVersionString: '1.7.1',
         },
       });
 
@@ -1434,7 +1464,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.7.0',
+            softwareVersionString: '1.7.1',
           },
         });
       } catch (err) {
@@ -2206,13 +2236,21 @@ export class MatterManager {
           FanControlServer.with(FanControl.Feature.MultiSpeed, FanControl.Feature.Auto),
           AirQualityServer,
           Pm25ConcentrationMeasurementServer.with(Pm25ConcentrationMeasurement.Feature.NumericMeasurement),
+          HepaFilterMonitoringServer.with(HepaFilterMonitoring.Feature.Condition, HepaFilterMonitoring.Feature.Warning),
         ];
 
-        if (dev.hepaEntity || dev.hepaFilter !== null) {
-          behaviors.push(HepaFilterMonitoringServer);
+        if (dev.pm10Entity || dev.pm10 !== null) {
+          behaviors.push(
+            Pm10ConcentrationMeasurementServer.with(Pm10ConcentrationMeasurement.Feature.NumericMeasurement)
+          );
         }
         if (dev.carbonEntity || dev.carbonFilter !== null) {
-          behaviors.push(ActivatedCarbonFilterMonitoringServer);
+          behaviors.push(
+            ActivatedCarbonFilterMonitoringServer.with(
+              ActivatedCarbonFilterMonitoring.Feature.Condition,
+              ActivatedCarbonFilterMonitoring.Feature.Warning
+            )
+          );
         }
         if (dev.tempEntity) {
           behaviors.push(TemperatureMeasurementServer);
@@ -2252,13 +2290,21 @@ export class MatterManager {
           },
         };
 
-        if (dev.hepaEntity || dev.hepaFilter !== null) {
-          const hVal = dev.hepaFilter !== null ? Math.max(0, Math.min(100, Math.round(dev.hepaFilter))) : 100;
-          epConfig.hepaFilterMonitoring = {
-            condition: hVal,
-            degradationDirection: 1, // Down
-            changeIndication: hVal <= 10 ? 2 : (hVal <= 20 ? 1 : 0),
-            inPlaceIndicator: true,
+        const hVal = dev.hepaFilter !== null ? Math.max(0, Math.min(100, Math.round(dev.hepaFilter))) : 100;
+        epConfig.hepaFilterMonitoring = {
+          condition: hVal,
+          degradationDirection: 1, // Down
+          changeIndication: hVal <= 10 ? 2 : (hVal <= 20 ? 1 : 0),
+          inPlaceIndicator: true,
+        };
+
+        if (dev.pm10Entity || dev.pm10 !== null) {
+          epConfig.pm10ConcentrationMeasurement = {
+            measuredValue: dev.pm10 !== null ? Math.max(0, Math.min(1000, dev.pm10)) : 0,
+            minMeasuredValue: 0,
+            maxMeasuredValue: 1000,
+            measurementMedium: 0, // Air
+            measurementUnit: 4, // µg/m³
           };
         }
 
@@ -2444,6 +2490,14 @@ export class MatterManager {
               if (info) info.pm25 = newDev.pm25;
             }
 
+            if (endpoint.behaviors.supported.pm10ConcentrationMeasurement && newDev.pm10 !== null) {
+              const pVal = Math.max(0, Math.min(1000, newDev.pm10));
+              await endpoint.set({
+                pm10ConcentrationMeasurement: { measuredValue: pVal },
+              });
+              if (info) info.pm10 = newDev.pm10;
+            }
+
             if (endpoint.behaviors.supported.airQuality) {
               const aq = mapPm25ToMatterAirQuality(newDev.pm25, newDev.airQuality);
               await endpoint.set({ airQuality: { airQuality: aq } });
@@ -2599,6 +2653,7 @@ export class MatterManager {
         fanMode: dev.fanMode || null,
         percentage: dev.percentage ?? null,
         pm25: dev.pm25 ?? null,
+        pm10: dev.pm10 ?? null,
         airQuality: dev.airQuality ?? null,
         hepaFilter: dev.hepaFilter ?? null,
         carbonFilter: dev.carbonFilter ?? null,
@@ -2849,14 +2904,17 @@ export class MatterManager {
       } else if (entity_id === dev.pm25Entity) {
         const num = parseFloat(change.raw_state);
         if (!isNaN(num)) dev.pm25 = num;
+      } else if (entity_id === dev.pm10Entity) {
+        const num = parseFloat(change.raw_state);
+        if (!isNaN(num)) dev.pm10 = num;
       } else if (entity_id === dev.aqiEntity) {
         dev.airQuality = change.raw_state;
       } else if (entity_id === dev.hepaEntity) {
-        const num = parseFloat(change.raw_state);
-        if (!isNaN(num)) dev.hepaFilter = num;
+        const val = parseFilterLife(change);
+        if (val !== null) dev.hepaFilter = val;
       } else if (entity_id === dev.carbonEntity) {
-        const num = parseFloat(change.raw_state);
-        if (!isNaN(num)) dev.carbonFilter = num;
+        const val = parseFilterLife(change);
+        if (val !== null) dev.carbonFilter = val;
       }
     } else if (dev.deviceKind === 'fan') {
       dev.isOn = change.state === true || change.raw_state === 'on';
@@ -2890,6 +2948,7 @@ export class MatterManager {
           channels: dev.channels || [],
           percentage: activeEntry.info.percentage ?? dev.percentage ?? null,
           pm25: activeEntry.info.pm25 ?? dev.pm25 ?? null,
+          pm10: activeEntry.info.pm10 ?? dev.pm10 ?? null,
           airQuality: activeEntry.info.airQuality ?? dev.airQuality ?? null,
           hepaFilter: activeEntry.info.hepaFilter ?? dev.hepaFilter ?? null,
           carbonFilter: activeEntry.info.carbonFilter ?? dev.carbonFilter ?? null,
@@ -2920,6 +2979,7 @@ export class MatterManager {
           fanMode: dev.fanMode || null,
           percentage: dev.percentage ?? null,
           pm25: dev.pm25 ?? null,
+          pm10: dev.pm10 ?? null,
           airQuality: dev.airQuality ?? null,
           hepaFilter: dev.hepaFilter ?? null,
           carbonFilter: dev.carbonFilter ?? null,

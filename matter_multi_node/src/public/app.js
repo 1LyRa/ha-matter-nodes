@@ -475,6 +475,14 @@ function renderCard(dev) {
         </div>
       `);
     }
+    if (dev.pm10 !== null && dev.pm10 !== undefined) {
+      metrics.push(`
+        <div class="sensor-metric">
+          <span class="metric-label">PM10</span>
+          <span class="metric-value">🌫️ ${dev.pm10} µg/m³</span>
+        </div>
+      `);
+    }
     if (dev.airQuality) {
       metrics.push(`
         <div class="sensor-metric">
@@ -513,6 +521,14 @@ function renderCard(dev) {
         <div class="sensor-metric">
           <span class="metric-label">Carbon Filter</span>
           <span class="metric-value">⬛ ${Math.round(dev.carbonFilter)}%</span>
+        </div>
+      `);
+    }
+    if ((dev.hepaFilter === null || dev.hepaFilter === undefined) && (dev.carbonFilter === null || dev.carbonFilter === undefined)) {
+      metrics.push(`
+        <div class="sensor-metric">
+          <span class="metric-label">Air Filter</span>
+          <span class="metric-value">🛡️ Good (100%)</span>
         </div>
       `);
     }

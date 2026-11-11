@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1
+
+- **Matter PM10 Particulate Measurement**: Added `Pm10ConcentrationMeasurementServer` (`Pm10ConcentrationMeasurement.Feature.NumericMeasurement`) to Matter air purifier nodes for live coarse particulate reporting to Google Home and other Matter controllers.
+- **Air Filter Condition & Warning Features**: Enabled `HepaFilterMonitoring.Feature.Condition` and `HepaFilterMonitoring.Feature.Warning` (as well as on `ActivatedCarbonFilterMonitoringServer`). These features conform to the Matter specification, allowing Google Home to query the `condition` percentage attribute and render live filter health and replacement alerts.
+- **Universal Filter Life Parsing**: Implemented robust parsing for filter sensor entities across percentages (`0-100%`), remaining hours (`h`), remaining days (`d`), and categorical statuses (`good`, `ok`, `warning`, `replace`).
+- **Dashboard PM10 & Filter Badges**: Updated web UI purifier cards to display real-time **PM10** readings and air filter health.
+
 ## 1.7.0
 
 - **Native Matter AirPurifier Support**: Discovers and unifies air purifiers (including Dyson Purifier Humidify+Cool Formaldehyde De-NOx, Xiaomi, Coway, Levoit) into full-fledged Matter `AirPurifierDevice` (0x002d) nodes. Features discrete fan speed control (`FanControl` with `MultiSpeed` and `Auto`), power toggling (`OnOff`), real-time PM2.5 concentration (`Pm25ConcentrationMeasurement`), air quality level (`AirQuality`), HEPA filter life (`HepaFilterMonitoring`), activated carbon filter life (`ActivatedCarbonFilterMonitoring`), ambient temperature, and relative humidity.
