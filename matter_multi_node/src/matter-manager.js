@@ -191,14 +191,33 @@ export class MatterManager {
         const isOn = stateObj.state === 'on';
         const colorModes = stateObj.attributes?.supported_color_modes || [];
         const brightness = stateObj.attributes?.brightness !== undefined ? stateObj.attributes.brightness : null;
-        const colorTemp = stateObj.attributes?.color_temp || null;
+
+        let colorTemp = null;
+        if (stateObj.attributes?.color_temp_kelvin) {
+          colorTemp = Math.round(1000000 / stateObj.attributes.color_temp_kelvin);
+        } else if (stateObj.attributes?.color_temp) {
+          colorTemp = stateObj.attributes.color_temp;
+        }
+
         const xyColor = stateObj.attributes?.xy_color || null;
-        const minMireds = stateObj.attributes?.min_mireds || 153;
-        const maxMireds = stateObj.attributes?.max_mireds || 500;
+
+        let minMireds = 153;
+        let maxMireds = 500;
+        if (stateObj.attributes?.max_color_temp_kelvin) {
+          minMireds = Math.max(1, Math.round(1000000 / stateObj.attributes.max_color_temp_kelvin));
+        } else if (stateObj.attributes?.min_mireds) {
+          minMireds = stateObj.attributes.min_mireds;
+        }
+
+        if (stateObj.attributes?.min_color_temp_kelvin) {
+          maxMireds = Math.max(minMireds, Math.round(1000000 / stateObj.attributes.min_color_temp_kelvin));
+        } else if (stateObj.attributes?.max_mireds) {
+          maxMireds = stateObj.attributes.max_mireds;
+        }
 
         let lightType = 'onoff';
         const hasColor = colorModes.some((m) => ['hs', 'rgb', 'rgbw', 'rgbww', 'xy'].includes(m));
-        const hasColorTemp = colorModes.includes('color_temp');
+        const hasColorTemp = colorModes.includes('color_temp') || stateObj.attributes?.color_temp_kelvin !== undefined;
         const hasBrightness = colorModes.includes('brightness') || brightness !== null;
 
         if (hasColor) {
@@ -620,10 +639,11 @@ export class MatterManager {
         if (endpoint.events.colorControl?.events?.colorTemperatureMireds$Changed) {
           endpoint.events.colorControl.events.colorTemperatureMireds$Changed.on(async (mireds) => {
             if (updatingFromHA || !mireds) return;
-            console.log(`[Matter Node: ${dev.friendlyName}] Light colorTemp command: ${mireds} mireds`);
+            const kelvin = Math.round(1000000 / mireds);
+            console.log(`[Matter Node: ${dev.friendlyName}] Light colorTemp command: ${mireds} mireds (${kelvin}K)`);
             dev.colorTemp = mireds;
             info.colorTemp = mireds;
-            sendLightUpdateToHA(true, { color_temp: mireds });
+            sendLightUpdateToHA(true, { color_temp_kelvin: kelvin });
           });
         }
 
@@ -1002,7 +1022,9 @@ export class MatterManager {
       if (change.attributes?.brightness !== undefined) {
         dev.brightness = change.attributes.brightness;
       }
-      if (change.attributes?.color_temp !== undefined) {
+      if (change.attributes?.color_temp_kelvin !== undefined && change.attributes.color_temp_kelvin !== null) {
+        dev.colorTemp = Math.round(1000000 / change.attributes.color_temp_kelvin);
+      } else if (change.attributes?.color_temp !== undefined && change.attributes.color_temp !== null) {
         dev.colorTemp = change.attributes.color_temp;
       }
       if (change.attributes?.xy_color !== undefined) {

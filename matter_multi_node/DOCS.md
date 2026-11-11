@@ -1,6 +1,8 @@
 # Matter Multi-Node Add-on
 
-Exposes your Home Assistant switches, lights, climate units (AC / Thermostats), and sensors as **individual standalone Matter nodes** (starting on UDP port 5541) directly to Google Home, Apple Home, or Alexa, **without using a Matter Bridge**.
+Exposes your Home Assistant switches, lights, climate units (AC / Thermostats), and sensors as **individual standalone Matter nodes** (starting on UDP port 5541) **tailored specifically for Google Home**, completely bypassing Google Home's Matter Bridge / Aggregator limitations.
+
+> **Important**: This add-on is designed and tested exclusively for **Google Home**. It is not intended or recommended for Apple Home, Alexa, or multi-admin setups.
 
 ## Why this exists
 Google Home frequently fails or drops devices when importing large Matter bridges. By presenting each device as an independent standalone Matter accessory:

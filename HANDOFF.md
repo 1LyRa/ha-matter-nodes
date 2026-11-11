@@ -2,7 +2,7 @@
 
 **Repository URL**: [https://github.com/1LyRa/ha-matter-nodes](https://github.com/1LyRa/ha-matter-nodes)  
 **Git Branch**: `main`  
-**Current Version**: `1.4.0`  
+**Current Version**: `1.4.1`  
 **Location in Workspace**: `/home/dizir/ha-matter-nodes` (`\\wsl.localhost\Ubuntu\home\dizir\ha-matter-nodes`)
 
 ---

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.1
+
+- **Fix Light Color Temperature**: Resolved `invalid_format: not a valid option, did you mean 'color_temp_kelvin'?` when adjusting color temperature from Google Home. Migrated service payload from deprecated `color_temp` to Home Assistant's modern `color_temp_kelvin` with bidirectional mireds/Kelvin translation.
+- **Tailored for Google Home**: Clarified throughout documentation and configuration that this add-on is designed and optimized specifically for Google Home to bypass Matter bridge limitations (not intended for Apple Home or Alexa).
+- **Dashboard Kelvin Display**: Updated dashboard light metrics to display temperature in Kelvin (`K`).
+
 ## 1.4.0
 
 - **AC & Thermostat Support (`climate.*`)**: Exposes Home Assistant climate entities as standalone Matter `ThermostatDevice` accessories directly to Google Home and Apple Home.

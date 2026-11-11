@@ -1,6 +1,9 @@
 # Matter Multi-Node Home Assistant Add-on
 
-Custom Home Assistant Add-on that exposes your switches, lights, climate units (AC/Thermostats), and sensors as **individual standalone Matter accessories** directly to Google Home, Apple Home, and Alexa—completely bypassing Matter Bridge / Aggregator bugs.
+Custom Home Assistant Add-on that exposes your switches, lights, climate units (AC/Thermostats), and sensors as **individual standalone Matter accessories tailored specifically for Google Home**—completely bypassing Google Home's Matter Bridge / Aggregator limitations.
+
+> [!IMPORTANT]
+> **Tailored Specifically for Google Home**: This add-on is engineered and optimized exclusively to solve Google Home's well-documented Matter bridge and aggregator limitations (endpoint drops, device state corruption, and pairing failures). It is **not designed, tested, or recommended for Apple Home, Home Assistant Matter Server, or Alexa fabrics**—its standalone single-accessory architecture is tuned specifically for reliable Google Home local control.
 
 ---
 
@@ -8,7 +11,7 @@ Custom Home Assistant Add-on that exposes your switches, lights, climate units (
 Google Home frequently fails or corrupts device states when importing large Matter bridges. By presenting each device as an independent standalone Matter accessory:
 - **No Matter Bridge**: Each device has its own dedicated Matter node without an Aggregator endpoint.
 - **Dedicated Port**: Dynamically allocates sequential UDP ports starting at `5541` (leaving `5540` untouched for existing Matter servers).
-- **Exact Device Naming**: Injects Home Assistant entity friendly names into Matter's `BasicInformation` (`nodeLabel`, `productName`, and `vendorName`) so Google Home and Apple Home pre-fill the exact HA name automatically.
+- **Exact Device Naming**: Injects Home Assistant entity friendly names into Matter's `BasicInformation` (`nodeLabel`, `productName`, and `vendorName`) so Google Home pre-fills the exact HA name automatically.
 - **Dormant by Default**: Discovers devices automatically, but only announces and generates QR codes for devices you explicitly choose.
 - **Smart Sensor Grouping**: Groups multi-sensor devices (Temperature + Humidity + Battery) into a single Matter device with one QR code.
 

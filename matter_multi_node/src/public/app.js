@@ -248,7 +248,7 @@ function renderCard(dev) {
           dev.colorTemp !== null && dev.colorTemp !== undefined
             ? `<div class="sensor-metric">
                 <span class="metric-label">Color Temp</span>
-                <span class="metric-value">🌡️ ${dev.colorTemp} mireds</span>
+                <span class="metric-value">🌡️ ${Math.round(1000000 / dev.colorTemp)}K</span>
               </div>`
             : ''
         }
