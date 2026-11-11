@@ -138,6 +138,18 @@ function haFanModesToSpeeds(modes = []) {
   return sortFanSpeeds(speeds);
 }
 
+function getOrderedFanSettings(supportedModes = []) {
+  const speeds = haFanModesToSpeeds(supportedModes);
+  const autoMode = (supportedModes || []).find((m) => String(m).toLowerCase() === 'auto');
+  if (!autoMode) {
+    return speeds;
+  }
+  const half = Math.floor(speeds.length / 2);
+  const lower = speeds.slice(0, half);
+  const higher = speeds.slice(half);
+  return [...lower, autoMode, ...higher];
+}
+
 function matterFanModeToHa(matterMode, supportedModes = []) {
   if (!supportedModes || supportedModes.length === 0) return 'auto';
   const speeds = haFanModesToSpeeds(supportedModes);
@@ -161,17 +173,17 @@ function matterFanModeToHa(matterMode, supportedModes = []) {
 
 function haFanModeToPercent(mode, supportedModes = []) {
   if (!mode || String(mode).toLowerCase() === 'off') return 0;
-  if (String(mode).toLowerCase() === 'auto') return 100;
-  const speeds = haFanModesToSpeeds(supportedModes);
-  const idx = speeds.findIndex((s) => String(s).toLowerCase() === String(mode).toLowerCase());
+  if (String(mode).toLowerCase() === 'auto') return 50;
+  const list = getOrderedFanSettings(supportedModes);
+  const idx = list.findIndex((s) => String(s).toLowerCase() === String(mode).toLowerCase());
   if (idx === -1) {
     const m = haFanModeToMatter(mode);
-    if (m === FanControl.FanMode.Low) return 33;
-    if (m === FanControl.FanMode.Medium) return 66;
+    if (m === FanControl.FanMode.Low) return 25;
+    if (m === FanControl.FanMode.Medium) return 65;
     if (m === FanControl.FanMode.High) return 100;
-    return 100;
+    return 50;
   }
-  return Math.round(((idx + 1) / speeds.length) * 100);
+  return Math.round(((idx + 1) / list.length) * 100);
 }
 
 function percentToHaFanMode(percent, supportedModes = []) {
@@ -179,21 +191,40 @@ function percentToHaFanMode(percent, supportedModes = []) {
   if (percent === 0 && supportedModes.some((m) => String(m).toLowerCase() === 'off')) {
     return supportedModes.find((m) => String(m).toLowerCase() === 'off');
   }
-  const speeds = haFanModesToSpeeds(supportedModes);
-  const clamped = Math.max(1, Math.min(100, percent));
-  const idx = Math.min(speeds.length - 1, Math.floor((clamped - 1) / (100 / speeds.length)));
-  return speeds[idx];
+  const autoMode = supportedModes.find((m) => String(m).toLowerCase() === 'auto');
+  if (autoMode && percent >= 45 && percent <= 55) {
+    return autoMode;
+  }
+  const list = getOrderedFanSettings(supportedModes);
+  if (list.length === 0) return autoMode || 'auto';
+
+  let best = list[0];
+  let minDiff = 999;
+  for (let i = 0; i < list.length; i++) {
+    const targetPct = String(list[i]).toLowerCase() === 'auto'
+      ? 50
+      : Math.round(((i + 1) / list.length) * 100);
+    const diff = Math.abs(targetPct - percent);
+    if (diff < minDiff) {
+      minDiff = diff;
+      best = list[i];
+    }
+  }
+  return best;
 }
 
 function haFanModeToSpeed(mode, supportedModes = []) {
   if (!mode || String(mode).toLowerCase() === 'off') return 0;
-  const speeds = haFanModesToSpeeds(supportedModes);
-  const idx = speeds.findIndex((s) => String(s).toLowerCase() === String(mode).toLowerCase());
+  const list = getOrderedFanSettings(supportedModes);
+  const idx = list.findIndex((s) => String(s).toLowerCase() === String(mode).toLowerCase());
   if (idx === -1) {
+    if (String(mode).toLowerCase() === 'auto') {
+      return Math.ceil(list.length / 2);
+    }
     const m = haFanModeToMatter(mode);
     if (m === FanControl.FanMode.Low) return 1;
-    if (m === FanControl.FanMode.Medium) return 2;
-    if (m === FanControl.FanMode.High) return Math.min(3, speeds.length);
+    if (m === FanControl.FanMode.Medium) return Math.ceil(list.length / 2);
+    if (m === FanControl.FanMode.High) return list.length;
     return 1;
   }
   return idx + 1;
@@ -204,9 +235,9 @@ function speedToHaFanMode(speed, supportedModes = []) {
   if (speed === 0 && supportedModes.some((m) => String(m).toLowerCase() === 'off')) {
     return supportedModes.find((m) => String(m).toLowerCase() === 'off');
   }
-  const speeds = haFanModesToSpeeds(supportedModes);
-  const idx = Math.max(0, Math.min(speeds.length - 1, speed - 1));
-  return speeds[idx];
+  const list = getOrderedFanSettings(supportedModes);
+  const idx = Math.max(0, Math.min(list.length - 1, speed - 1));
+  return list[idx];
 }
 
 function convertHumidityToMatter(value) {
@@ -231,9 +262,8 @@ function getSensorBaseId(entityId) {
 }
 
 function cleanDeviceFriendlyName(name, deviceName) {
-  if (deviceName && deviceName.trim()) return deviceName.trim();
-  if (!name) return '';
-  let str = name.trim();
+  let str = (deviceName && deviceName.trim()) ? deviceName.trim() : (name || '').trim();
+  if (!str) return '';
   // Strip trailing raw power / raw_power
   str = str.replace(/\s*[-–—:]?\s*\braw\s*power\b/gi, '').trim();
   // If words are duplicated e.g. 'Air conditioner Air conditioner' or 'Bedroom fountain Bedroom fountain'
@@ -1148,7 +1178,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.6.0',
+          softwareVersionString: '1.6.1',
         },
       });
 
@@ -1159,7 +1189,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.6.0',
+            softwareVersionString: '1.6.1',
           },
         });
       } catch (err) {
@@ -1562,7 +1592,7 @@ export class MatterManager {
         const fanSeq = haFanModesToMatterSequence(dev.fanModes);
         const currentFM = haFanModeToMatter(dev.fanMode);
         const currentPct = haFanModeToPercent(dev.fanMode, dev.fanModes);
-        const speedMax = Math.max(1, haFanModesToSpeeds(dev.fanModes).length);
+        const speedMax = Math.max(1, getOrderedFanSettings(dev.fanModes).length);
         const currentSpd = haFanModeToSpeed(dev.fanMode, dev.fanModes);
 
         const ThermostatClass = ThermostatDevice.with(

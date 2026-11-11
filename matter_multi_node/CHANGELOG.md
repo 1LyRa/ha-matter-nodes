@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.1
+
+- **Centered 50% Auto Fan Mode**: Mapped `Auto` fan mode directly to 50% on the Matter fan percentage slider. When Google Home sets the fan slider to ~50% (45%–55%), the backend switches the AC fan mode to `Auto`. When Home Assistant is in `Auto` mode, the Matter FanControl cluster updates `percentSetting` / `percentCurrent` to 50%, centering Google Home's fan slider on Auto while distributing discrete manual speeds evenly below and above 50% (`Mute` $\rightarrow$ `Low` $\rightarrow$ `Mid Low` $\rightarrow$ **`Auto (50%)`** $\rightarrow$ `Mid` $\rightarrow$ `Mid High` $\rightarrow$ `High` $\rightarrow$ `Turbo`).
+- **Enhanced Name Cleaning**: Enhanced `cleanDeviceFriendlyName` to strip repeated phrases and trailing `raw power` from device registry names as well as friendly names, ensuring fountain pump devices display as clean names (e.g. "Bedroom fountain").
+
 ## 1.6.0
 
 - **Logical Fan Speed Sorting**: Fixed fan speed percentage mapping for ACs and fan entities whose Home Assistant options are in alphabetical order (e.g. `["High", "Low", "Mid", "Mid High", "Mid Low", "Mute", "Turbo"]`). Speeds are now ranked and sorted logically from quietest to fastest (`Mute` $\rightarrow$ `Low` $\rightarrow$ `Mid Low` $\rightarrow$ `Mid` $\rightarrow$ `Mid High` $\rightarrow$ `High` $\rightarrow$ `Turbo`), preventing low percentages from setting High and high percentages from setting Mute.
