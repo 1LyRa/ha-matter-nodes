@@ -38,6 +38,8 @@ const countInactive = document.getElementById('countInactive');
 const searchInput = document.getElementById('searchInput');
 const cardsGrid = document.getElementById('cardsGrid');
 const filterTabs = document.querySelectorAll('.tab-btn');
+const btnToggleLogs = document.getElementById('btnToggleLogs');
+const btnCloseLogs = document.getElementById('btnCloseLogs');
 const logsContainer = document.getElementById('logsContainer');
 const logsTerminal = document.getElementById('logsTerminal');
 const autoScrollCheck = document.getElementById('autoScrollCheck');
@@ -49,37 +51,81 @@ let allDevices = [];
 let activeTab = 'all';
 let cachedLogs = [];
 let logsPollTimer = null;
+let isLogsOpen = false;
 const expandedPairingInfo = new Set();
+
+function openLogsView() {
+  isLogsOpen = true;
+  cardsGrid.style.display = 'none';
+  logsContainer.style.display = 'block';
+  if (searchInput && searchInput.parentElement) {
+    searchInput.parentElement.style.display = 'none';
+  }
+  filterTabs.forEach((t) => t.classList.remove('active'));
+  if (btnToggleLogs) btnToggleLogs.classList.add('active');
+  fetchLogs();
+  if (!logsPollTimer) {
+    logsPollTimer = setInterval(fetchLogs, 2500);
+  }
+}
+
+function closeLogsView() {
+  isLogsOpen = false;
+  cardsGrid.style.display = 'grid';
+  logsContainer.style.display = 'none';
+  if (searchInput && searchInput.parentElement) {
+    searchInput.parentElement.style.display = 'block';
+  }
+  if (btnToggleLogs) btnToggleLogs.classList.remove('active');
+  filterTabs.forEach((t) => {
+    if (t.getAttribute('data-tab') === activeTab) {
+      t.classList.add('active');
+    }
+  });
+  if (logsPollTimer) {
+    clearInterval(logsPollTimer);
+    logsPollTimer = null;
+  }
+  renderCards();
+}
+
+function toggleLogsView() {
+  if (isLogsOpen) {
+    closeLogsView();
+  } else {
+    openLogsView();
+  }
+}
+
+if (btnToggleLogs) {
+  btnToggleLogs.addEventListener('click', toggleLogsView);
+}
+
+if (btnCloseLogs) {
+  btnCloseLogs.addEventListener('click', closeLogsView);
+}
 
 // Tab Switching
 filterTabs.forEach((tab) => {
   tab.addEventListener('click', () => {
-    filterTabs.forEach((t) => t.classList.remove('active'));
-    tab.classList.add('active');
-    activeTab = tab.getAttribute('data-tab');
-
-    if (activeTab === 'logs') {
-      cardsGrid.style.display = 'none';
-      logsContainer.style.display = 'block';
-      if (searchInput && searchInput.parentElement) {
-        searchInput.parentElement.style.display = 'none';
-      }
-      fetchLogs();
-      if (!logsPollTimer) {
-        logsPollTimer = setInterval(fetchLogs, 2500);
-      }
-    } else {
-      cardsGrid.style.display = 'grid';
+    if (isLogsOpen) {
+      isLogsOpen = false;
+      if (btnToggleLogs) btnToggleLogs.classList.remove('active');
       logsContainer.style.display = 'none';
-      if (searchInput && searchInput.parentElement) {
-        searchInput.parentElement.style.display = 'block';
-      }
       if (logsPollTimer) {
         clearInterval(logsPollTimer);
         logsPollTimer = null;
       }
-      renderCards();
     }
+    filterTabs.forEach((t) => t.classList.remove('active'));
+    tab.classList.add('active');
+    activeTab = tab.getAttribute('data-tab');
+
+    cardsGrid.style.display = 'grid';
+    if (searchInput && searchInput.parentElement) {
+      searchInput.parentElement.style.display = 'block';
+    }
+    renderCards();
   });
 });
 

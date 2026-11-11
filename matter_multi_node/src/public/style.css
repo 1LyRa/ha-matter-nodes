@@ -176,6 +176,36 @@ body {
   border: 1px solid var(--primary);
 }
 
+/* Header Action Buttons */
+.header-action-btn {
+  background: var(--btn-secondary-bg);
+  color: var(--btn-secondary-text);
+  border: 1px solid var(--border-card);
+  padding: 6px 14px;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.header-action-btn:hover {
+  background: var(--btn-secondary-hover);
+  border-color: var(--primary);
+  color: var(--text-primary);
+}
+
+.header-action-btn.active {
+  background: var(--primary);
+  color: #ffffff;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-subtle);
+}
+
 /* Theme Switcher */
 .theme-switcher {
   display: inline-flex;

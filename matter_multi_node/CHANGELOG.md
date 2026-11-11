@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.1
+
+- **Official Matter Sidebar Icon**: Updated `panel_icon: "mdi:matter"` in Home Assistant configuration to display the official Matter logo on the sidebar instead of a generic cube icon.
+- **Top-Right Logs Button**: Moved the live logs viewer toggle to the top-right header next to status badges and theme controls, keeping entity filter tabs strictly focused on device domains.
+- **In-Viewer Dismiss**: Added a quick close button inside the logs header to dismiss the logs viewer and return directly to the devices grid.
+- **Repository Cleanup**: Removed internal development files, archived temporary icon design assets, purged legacy Hyper-V references, and modernized documentation to focus purely on Home Assistant Add-on Store installation.
+
 ## 1.5.0
 
 - **Dedicated On/Off Button for AC / Climate in Google Home**: Extended the Thermostat endpoint with Matter `OnOffServer`. Google Home now displays a dedicated power toggle button directly on the AC/thermostat card and detail screen, controlling `climate.turn_on` and `climate.turn_off` (with fallback to `set_hvac_mode`).

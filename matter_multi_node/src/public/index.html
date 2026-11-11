@@ -23,6 +23,9 @@
         <div id="haStatusBadge" class="status-badge connecting">Connecting to HA...</div>
         <div id="nodeCountBadge" class="status-badge count">0 Active / 0 Total</div>
 
+        <!-- Logs Toggle Button -->
+        <button id="btnToggleLogs" class="header-action-btn" title="View live Matter & service logs">📋 Logs</button>
+
         <!-- Theme Picker -->
         <div class="theme-switcher" id="themeSwitcher">
           <button class="theme-btn active" data-theme="auto" title="Follow system theme">Auto</button>
@@ -59,7 +62,6 @@
         <button class="tab-btn" data-tab="sensor">Sensors (<span id="countSensors">0</span>)</button>
         <button class="tab-btn" data-tab="active">Active (<span id="countActive">0</span>)</button>
         <button class="tab-btn" data-tab="inactive">Unannounced (<span id="countInactive">0</span>)</button>
-        <button class="tab-btn tab-logs" data-tab="logs">📋 Logs</button>
       </div>
 
       <div class="search-wrapper">
@@ -92,6 +94,7 @@
           <button id="btnRefreshLogs" class="btn-log-action" title="Refresh logs">🔄 Refresh</button>
           <button id="btnCopyLogs" class="btn-log-action" title="Copy all logs to clipboard">📋 Copy</button>
           <button id="btnClearLogs" class="btn-log-action" title="Clear log buffer">🗑️ Clear</button>
+          <button id="btnCloseLogs" class="btn-log-action" title="Close logs viewer">✖ Close</button>
         </div>
       </div>
       <div id="logsTerminal" class="logs-terminal">

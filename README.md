@@ -50,7 +50,7 @@ Google Home frequently fails or corrupts device states when importing large Matt
 5. In the store, find **Matter Multi-Node** and click **Install**.
 6. Enable **Start on boot** and **Show in sidebar**, then click **Start**.
 
-> **Note for VM / Hyper-V Users**: Ensure your Home Assistant VM uses an **External Virtual Switch** (bridged to your physical network) so Google Nest Hubs and phones on your LAN can discover and communicate with Matter UDP ports.
+> **Network Note**: Ensure your Home Assistant host/VM is bridged directly to your local physical network (not isolated behind NAT) so Google Nest Hubs and phones on your LAN can discover and communicate with Matter UDP ports.
 
 ---
 

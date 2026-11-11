@@ -12,15 +12,19 @@ Google Home frequently fails or drops devices when importing large Matter bridge
 * ACs and Thermostats include a dedicated On/Off power button and fan speed controls right inside Google Home.
 * Commissioned devices collapse their pairing codes to keep the dashboard clean.
 
-## Installation in Home Assistant (Hyper-V VM)
-1. Install the **Samba share** or **Advanced SSH & Web Terminal** add-on in Home Assistant.
-2. Navigate to your `/addons` folder.
-3. Create a folder named `matter_multi_node` and copy the files from this directory into it.
-4. In Home Assistant, go to **Settings** > **Add-ons** > **Add-on Store**.
-5. Click the **three dots (top right)** > **Check for updates**.
-6. Under the **Local add-ons** section at the top, select **Matter Multi-Node**.
-7. Click **Install**, then click **Start**.
-8. Turn on **Show in sidebar**.
+## Installation
+
+1. In Home Assistant, navigate to **Settings** > **Add-ons** > **Add-on Store**.
+2. Click the **three dots** in the top-right corner and select **Repositories**.
+3. Add the repository URL:
+   ```text
+   https://github.com/1LyRa/ha-matter-nodes
+   ```
+4. Click **Add**, then close the dialog.
+5. In the store, find **Matter Multi-Node** and click **Install**.
+6. Enable **Start on boot** and **Show in sidebar**, then click **Start**.
+
+> **Network Note**: Ensure your Home Assistant host is bridged directly to your local physical network so Google Nest Hubs and phones on your LAN can discover and communicate with Matter UDP ports.
 
 ## Pairing with Google Home
 1. Click **Matter Nodes** in your Home Assistant sidebar to open the dashboard.

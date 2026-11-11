@@ -4,3 +4,5 @@ data/
 .matter/
 .DS_Store
 *.log
+HANDOFF.md
+*.tmp
