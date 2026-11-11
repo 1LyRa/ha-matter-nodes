@@ -63,6 +63,11 @@ export class HAClient extends EventEmitter {
     this.ws.on('close', (code, reason) => {
       console.warn(`[HA Client] WebSocket closed (code ${code}): ${reason || 'No reason'}`);
       this.isConnected = false;
+      for (const [reqId, handler] of this.pendingRequests.entries()) {
+        if (handler.timer) clearTimeout(handler.timer);
+        handler.reject(new Error(`HA WebSocket closed before request ${reqId} completed`));
+      }
+      this.pendingRequests.clear();
       this.emit('disconnected');
       this.scheduleReconnect();
     });
@@ -111,6 +116,7 @@ export class HAClient extends EventEmitter {
       const handler = this.pendingRequests.get(msg.id);
       if (handler) {
         this.pendingRequests.delete(msg.id);
+        if (handler.timer) clearTimeout(handler.timer);
         if (msg.success) {
           handler.resolve(msg.result);
         } else {
@@ -199,16 +205,15 @@ export class HAClient extends EventEmitter {
     return new Promise((resolve, reject) => {
       const id = this.messageId++;
       const payload = { ...obj, id };
-      this.pendingRequests.set(id, { resolve, reject });
-      this.send(payload);
-
-      // Timeout request after 10s
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
           reject(new Error(`HA Request ${id} (${obj.type}) timed out`));
         }
       }, 10000);
+
+      this.pendingRequests.set(id, { resolve, reject, timer });
+      this.send(payload);
     });
   }
 

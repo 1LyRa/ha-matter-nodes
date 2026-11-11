@@ -1,7 +1,7 @@
 name: "Matter Multi-Node"
 slug: "matter_multi_node"
 description: "Exposes Home Assistant switches, lights, climate (AC/thermostats), and sensors as individual standalone Matter devices tailored specifically for Google Home to bypass Matter bridge bugs."
-version: "1.7.1"
+version: "1.7.2"
 # Uncomment after publishing multi-arch images with GitHub Actions workflow to enable layer download progress bar in HA:
 # image: "ghcr.io/1lyra/matter_multi_node-{arch}"
 startup: "services"

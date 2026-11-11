@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.2
+
+- **Fix `resetNodeForDevice` Method Resolution**: Resolved a runtime crash (`TypeError: this.getNextAvailablePort is not a function`) when resetting uninitialized nodes by correctly routing port and discriminator allocation through `allocatePortAndDiscriminator`.
+- **Eliminate WebSocket Request & Timer Leaks**: Pending Home Assistant requests now clear their 10-second rejection timeouts immediately upon receipt of response. On unexpected WebSocket disconnection, all in-flight requests are immediately rejected and timers cleared to prevent event-loop leaks.
+- **Node Startup Socket & Storage Lock Cleanup**: Wrapped node startup failures in `ServerNode.close()` cleanup to ensure storage locks and network socket allocations are safely released if `node.start()` encounters an error.
+- **Prevent Sensor Suppression from Child Switches**: Fixed an issue where auxiliary switches on sensor devices (such as audible or visual alarms on water leak sensors) marked the device as having a primary switch, incorrectly suppressing environmental and leak sensors from the dashboard.
+- **Preserve Fountains and Clean Naming**: Ensured fountains and pumps with `raw_power` in their entity ID (e.g. `switch.bedroom_fountain_new_bedroom_fountain_raw_power`) are recognized as primary pump devices and never treated as auxiliary child entities. Enhanced name deduplication removes redundant words and integration artifacts, yielding clean titles like "Bedroom fountain".
+- **Real-Time Air Quality UI Refresh**: Included air purifier telemetry (`pm25`, `pm10`, `percentage`, `airQuality`, `hepaFilter`, `carbonFilter`) in frontend card fingerprinting for instant UI rendering upon Home Assistant state updates.
+
 ## 1.7.1
 
 - **Matter PM10 Particulate Measurement**: Added `Pm10ConcentrationMeasurementServer` (`Pm10ConcentrationMeasurement.Feature.NumericMeasurement`) to Matter air purifier nodes for live coarse particulate reporting to Google Home and other Matter controllers.

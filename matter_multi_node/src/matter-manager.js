@@ -280,12 +280,29 @@ function getSensorBaseId(entityId) {
 }
 
 function cleanDeviceFriendlyName(name, deviceName) {
-  let str = (name && name.trim()) ? name.trim() : (deviceName || '').trim();
+  const devName = (deviceName || '').trim();
+  let str = (name && name.trim()) ? name.trim() : devName;
   if (!str) return '';
+
+  if (devName && devName.length > 2) {
+    const withoutSuffix = str.replace(/\s*[-–—:]?\s*\b(?:raw\s*power|power)\b$/gi, '').trim();
+    if (withoutSuffix.toLowerCase() === devName.toLowerCase()) {
+      return devName;
+    }
+    const regex = new RegExp(`^(?:${devName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*)+$`, 'i');
+    if (regex.test(withoutSuffix)) {
+      return devName;
+    }
+  }
+
   // Strip trailing raw power / power
   if (str.length > 5) {
     str = str.replace(/\s*[-–—:]?\s*\b(?:raw\s*power|power)\b$/gi, '').trim();
   }
+
+  // Strip extraneous "new" artifact inserted by some integrations
+  str = str.replace(/\bnew\b/gi, '').replace(/\s+/g, ' ').trim();
+
   // If words are duplicated e.g. 'Air conditioner Air conditioner' or 'Bedroom fountain Bedroom fountain'
   const words = str.split(/\s+/);
   if (words.length >= 2 && words.length % 2 === 0) {
@@ -366,6 +383,7 @@ function parseFilterLife(stateObj) {
 
 function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, haClient) {
   if (!entityId) return false;
+  if (isFountainOrPump(entityId, stateObj)) return false;
 
   const domain = entityId.split('.')[0];
   const baseName = entityId.split('.')[1] || '';
@@ -644,7 +662,7 @@ export class MatterManager {
   }
 
   allocatePortAndDiscriminator(deviceId) {
-    if (this.enabledConfig[deviceId]?.port) {
+    if (this.enabledConfig[deviceId]?.port && this.enabledConfig[deviceId]?.discriminator != null) {
       return {
         port: this.enabledConfig[deviceId].port,
         discriminator: this.enabledConfig[deviceId].discriminator,
@@ -852,9 +870,10 @@ export class MatterManager {
       const domain = entityId.split('.')[0];
       const baseName = entityId.split('.')[1] || '';
 
-      // Track primary device affiliations from HA Entity Registry
+      // Track primary device affiliations from HA Entity Registry (excluding secondary/child entities)
       const reg = this.haClient?.entityRegistry?.get(entityId);
-      if (domain === 'switch' || domain === 'input_boolean' || domain === 'light' || domain === 'climate') {
+      const isSub = isChildOrAuxiliaryEntity(entityId, stateObj, reg, statesMap, this.haClient);
+      if (!isSub && (domain === 'switch' || domain === 'input_boolean' || domain === 'light' || domain === 'climate')) {
         if (reg?.device_id) primaryDeviceIds.add(reg.device_id);
         primaryBaseIds.add(baseName);
       }
@@ -866,7 +885,6 @@ export class MatterManager {
         const friendlyName = cleanDeviceFriendlyName(rawFriendly, regDeviceName);
         const isOn = stateObj.state === 'on';
         const isPump = isFountainOrPump(entityId, stateObj);
-        const isSub = isChildOrAuxiliaryEntity(entityId, stateObj, reg, statesMap, this.haClient);
         const isAnnounced = this.enabledConfig[entityId]?.enabled === true || this.nodes.has(entityId);
 
         if (isSub) {
@@ -1397,6 +1415,7 @@ export class MatterManager {
     const sanitizedId = deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
     console.log(`[Matter Manager] Starting Matter node for [${dev.friendlyName}] (${dev.deviceKind}) on port ${port}, discriminator ${discriminator}...`);
 
+    let node;
     try {
       let primaryDeviceType;
       let lightDeviceClass = null;
@@ -1426,7 +1445,7 @@ export class MatterManager {
         primaryDeviceType = TemperatureSensorDevice.deviceType;
       }
 
-      const node = await ServerNode.create({
+      node = await ServerNode.create({
         id: sanitizedId,
         network: {
           port: port,
@@ -1453,7 +1472,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.7.1',
+          softwareVersionString: '1.7.2',
         },
       });
 
@@ -1464,7 +1483,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.7.1',
+            softwareVersionString: '1.7.2',
           },
         });
       } catch (err) {
@@ -2694,6 +2713,11 @@ export class MatterManager {
       return info;
     } catch (err) {
       console.error(`[Matter Manager] Failed to start Matter node for ${deviceId}:`, err);
+      if (node) {
+        try {
+          await node.close();
+        } catch (_) {}
+      }
       throw err;
     }
   }
@@ -2760,10 +2784,11 @@ export class MatterManager {
 
     // Ensure device is marked as enabled in configuration
     if (!this.enabledConfig[deviceId]) {
+      const { port, discriminator } = this.allocatePortAndDiscriminator(deviceId);
       this.enabledConfig[deviceId] = {
         enabled: true,
-        port: this.getNextAvailablePort(),
-        discriminator: this.getNextAvailableDiscriminator(),
+        port,
+        discriminator,
       };
     } else {
       this.enabledConfig[deviceId].enabled = true;
