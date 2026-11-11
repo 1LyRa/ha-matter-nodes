@@ -84,8 +84,14 @@ function isFountainOrPump(entityId, stateObj) {
   const lowerName = (stateObj?.attributes?.friendly_name || '').toLowerCase();
   const deviceClass = stateObj?.attributes?.device_class || '';
 
+  // Canonical helper fountains
   const knownFountains = ['switch.bedroom_fountain', 'switch.living_room_fountain'];
   if (knownFountains.includes(lowerId)) return true;
+
+  // Auxiliary or raw power entities are not pump devices themselves
+  if (lowerId.includes('raw_power') || lowerName.includes('raw power')) {
+    return false;
+  }
 
   if (deviceClass === 'pump') return true;
 
@@ -423,12 +429,29 @@ function parseFilterLife(stateObj) {
 
 function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, haClient) {
   if (!entityId) return false;
+
+  const lowerId = entityId.toLowerCase();
+
+  // Canonical fountain helper switches are never child or auxiliary
+  if (lowerId === 'switch.bedroom_fountain' || lowerId === 'switch.living_room_fountain') {
+    return false;
+  }
+
+  // Any other entity for bedroom or living room fountain is auxiliary to the canonical helper switch
+  if (allStatesMap) {
+    if (allStatesMap.has('switch.bedroom_fountain') && lowerId.includes('bedroom_fountain') && lowerId !== 'switch.bedroom_fountain') {
+      return true;
+    }
+    if (allStatesMap.has('switch.living_room_fountain') && lowerId.includes('living_room_fountain') && lowerId !== 'switch.living_room_fountain') {
+      return true;
+    }
+  }
+
   if (isFountainOrPump(entityId, stateObj)) return false;
 
   const domain = entityId.split('.')[0];
   const baseName = entityId.split('.')[1] || '';
   const friendlyName = (stateObj?.attributes?.friendly_name || '').toLowerCase();
-  const lowerId = entityId.toLowerCase();
 
   // 1. Authoritative: HA Entity Registry category
   // In Home Assistant, entities explicitly marked "config" or "diagnostic" are secondary child entities
@@ -547,6 +570,17 @@ function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, ha
 function findParentDeviceId(entityId, regEntry, allStatesMap, haClient) {
   const domain = entityId.split('.')[0];
   const baseName = entityId.split('.')[1] || '';
+  const lowerId = entityId.toLowerCase();
+
+  // Direct mapping for auxiliary fountain switches to canonical helpers
+  if (allStatesMap) {
+    if (allStatesMap.has('switch.bedroom_fountain') && lowerId.includes('bedroom_fountain') && lowerId !== 'switch.bedroom_fountain') {
+      return 'switch.bedroom_fountain';
+    }
+    if (allStatesMap.has('switch.living_room_fountain') && lowerId.includes('living_room_fountain') && lowerId !== 'switch.living_room_fountain') {
+      return 'switch.living_room_fountain';
+    }
+  }
 
   // 1. Check Device Registry
   if (regEntry?.device_id && haClient?.entityRegistry) {
@@ -946,7 +980,10 @@ export class MatterManager {
           }
         }
 
-        if (!isSub || this.showAllSensors || isAnnounced) {
+        const isAuxFountain = (entityId !== 'switch.bedroom_fountain' && entityId.toLowerCase().includes('bedroom_fountain')) ||
+                              (entityId !== 'switch.living_room_fountain' && entityId.toLowerCase().includes('living_room_fountain'));
+
+        if ((!isSub || this.showAllSensors || isAnnounced) && !isAuxFountain) {
           const entityStates = new Map();
           entityStates.set(entityId, stateObj.state);
           this.discoveredDevices.set(entityId, {
@@ -979,7 +1016,10 @@ export class MatterManager {
           }
         }
 
-        if (!isSub || this.showAllSensors || isAnnounced) {
+        const isAuxFountain = (entityId !== 'switch.bedroom_fountain' && entityId.toLowerCase().includes('bedroom_fountain')) ||
+                              (entityId !== 'switch.living_room_fountain' && entityId.toLowerCase().includes('living_room_fountain'));
+
+        if ((!isSub || this.showAllSensors || isAnnounced) && !isAuxFountain) {
           rawLights.push({
             entityId,
             stateObj,
@@ -1502,7 +1542,7 @@ export class MatterManager {
           await entry.node.set({
             basicInformation: {
               hardwareVersionString: haVerString,
-              softwareVersionString: '1.7.4',
+              softwareVersionString: '1.7.5',
             },
           });
         } catch (_) {}
@@ -1510,14 +1550,18 @@ export class MatterManager {
       }
 
       if (this.enabledConfig[deviceId]?.enabled === true) {
-        await this.startNodeForDevice(deviceId);
+        try {
+          await this.startNodeForDevice(deviceId);
+        } catch (err) {
+          console.error(`[Matter Manager] Failed to start Matter node for [${dev.friendlyName || deviceId}] (${deviceId}):`, err.message || err);
+        }
       }
     }
 
     console.log(`[Matter Manager] Discovered ${this.discoveredDevices.size} devices (${this.nodes.size} actively announced).`);
   }
 
-  async startNodeForDevice(deviceId) {
+  async startNodeForDevice(deviceId, isRetry = false) {
     if (this.nodes.has(deviceId)) {
       return this.nodes.get(deviceId).info;
     }
@@ -1599,7 +1643,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: haVerString,
           softwareVersion: 1,
-          softwareVersionString: '1.7.4',
+          softwareVersionString: '1.7.5',
         },
       });
 
@@ -1611,7 +1655,7 @@ export class MatterManager {
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
             hardwareVersionString: haVerString,
-            softwareVersionString: '1.7.4',
+            softwareVersionString: '1.7.5',
           },
         });
       } catch (err) {
@@ -2381,7 +2425,12 @@ export class MatterManager {
         const behaviors = [
           OnOffServer,
           FanControlServer.with(FanControl.Feature.MultiSpeed, FanControl.Feature.Auto),
-          AirQualityServer,
+          AirQualityServer.with(
+            AirQuality.Feature.Fair,
+            AirQuality.Feature.Moderate,
+            AirQuality.Feature.VeryPoor,
+            AirQuality.Feature.ExtremelyPoor
+          ),
           Pm25ConcentrationMeasurementServer.with(Pm25ConcentrationMeasurement.Feature.NumericMeasurement),
           HepaFilterMonitoringServer.with(HepaFilterMonitoring.Feature.Condition, HepaFilterMonitoring.Feature.Warning),
         ];
@@ -2862,6 +2911,16 @@ export class MatterManager {
           await node.close();
         } catch (_) {}
       }
+      if (!isRetry && (err.message?.includes('Behaviors have errors') || err.message?.includes('conformance') || err.message?.includes('BehaviorBacking'))) {
+        console.warn(`[Matter Manager] Detected behavior schema mismatch or storage error for ${deviceId}. Attempting recovery by clearing cache and restarting fresh...`);
+        const storageDir = path.join(this.config.storagePath, sanitizedId);
+        if (fs.existsSync(storageDir)) {
+          try {
+            fs.rmSync(storageDir, { recursive: true, force: true });
+          } catch (_) {}
+        }
+        return await this.startNodeForDevice(deviceId, true);
+      }
       throw err;
     }
   }
@@ -3051,10 +3110,12 @@ export class MatterManager {
 
     // Update discovered state
     if (dev.deviceKind === 'switch' || dev.deviceKind === 'pump') {
-      dev.isOn = change.state === true || change.raw_state === 'on';
-      if (activeEntry?.info) {
-        activeEntry.info.isOn = dev.isOn;
-        activeEntry.info.rawState = dev.rawState;
+      if (entity_id === dev.entityId) {
+        dev.isOn = change.state === true || change.raw_state === 'on';
+        if (activeEntry?.info) {
+          activeEntry.info.isOn = dev.isOn;
+          activeEntry.info.rawState = dev.rawState;
+        }
       }
     } else if (dev.deviceKind === 'light') {
       if (dev.isMultiLight && Array.isArray(dev.channels)) {
