@@ -3,7 +3,7 @@
 **Repository URL**: [https://github.com/1LyRa/ha-matter-nodes](https://github.com/1LyRa/ha-matter-nodes)  
 **Git Branch**: `main`  
 **Current Version**: `1.2.0`  
-**Location in Workspace**: `/home/dizir/.gemini/antigravity/scratch/ha-matter-nodes`
+**Location in Workspace**: `/home/dizir/ha-matter-nodes` (`\\wsl.localhost\Ubuntu\home\dizir\ha-matter-nodes`)
 
 ---
 
