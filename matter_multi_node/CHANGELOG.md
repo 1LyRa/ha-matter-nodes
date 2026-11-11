@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.0
+
+- **Dedicated On/Off Button for AC / Climate in Google Home**: Extended the Thermostat endpoint with Matter `OnOffServer`. Google Home now displays a dedicated power toggle button directly on the AC/thermostat card and detail screen, controlling `climate.turn_on` and `climate.turn_off` (with fallback to `set_hvac_mode`).
+- **Fan Speed & Fan Mode Control for ACs**: Extended climate endpoints with Matter `FanControlServer` (`MultiSpeed` and `Auto`). Google Home now exposes fan speed percentages, speed steps, and mode selectors (Low, Medium, High, Auto), dynamically mapped and synchronized to Home Assistant's `climate.set_fan_mode`.
+- **Collapsible Pairing Information for Paired Devices**: Already commissioned devices now hide the large QR code and manual pairing code by default to keep the dashboard tidy, replacing them with a compact "Active in Google Home Fabric" status and an on-demand "📱 Show Pairing QR & Code" expand toggle.
+- **Persistent Basic Information Sync**: Automatically syncs `nodeLabel` and `productName` attributes in node persistent storage on every startup, ensuring newly commissioned devices always provide their Home Assistant friendly name to Google Home.
+- **Multi-Arch GitHub Actions Builder Workflow**: Added `.github/workflows/publish.yaml` targeting `ghcr.io` via official Home Assistant Builder (`home-assistant/builder`), allowing pre-built multi-arch images (`amd64`, `aarch64`) with native layer download progress bars in Home Assistant during installation and updates.
+
 ## 1.4.2
 
 - **Live Logs Viewer**: Added an integrated "Logs" tab directly in the dashboard with live auto-scroll, color-coded level badges (INFO, WARN, ERROR, DEBUG), one-click clipboard copy, and buffer clearing.

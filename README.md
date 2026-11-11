@@ -21,6 +21,8 @@ Google Home frequently fails or corrupts device states when importing large Matt
 
 - **Thermostats & Air Conditioners**: `climate.*`
   - Matter `ThermostatDevice` with UI configuration
+  - **Dedicated On/Off Power Toggle**: Standalone power button directly inside Google Home cards and detail view via Matter `OnOffServer`.
+  - **Fan Speed & Mode Controls**: Full multi-speed fan control, percentage slider, and mode selection (`Auto`, `Low`, `Medium`, `High`) via Matter `FanControlServer`.
   - Dual and single setpoint sync (Cooling / Heating / Auto)
   - Full HVAC mode synchronization (`off`, `cool`, `heat`, `auto`)
   - Ambient room temperature reporting with automatic unit conversion (°C / °F)
@@ -60,3 +62,14 @@ Google Home frequently fails or corrupts device states when importing large Matt
    - Tap **Devices** > **+ (Add)** > **Matter-enabled device**.
    - Scan the QR code displayed on the dashboard (or enter the 11-digit manual pairing code).
 4. Google Home connects directly to your device via local Matter!
+
+---
+
+## Important Notes
+
+### Google Home Device Naming
+- **Initial Pairing**: During initial commissioning, Google Home reads `BasicInformation` (`nodeLabel` and `productName`) and automatically pre-fills the Home Assistant friendly name into Google Home's cloud database.
+- **Existing Paired Devices**: If a device was already paired prior to updating or renaming, Google Home does not overwrite its cloud-cached device name automatically (to protect custom user names in the app). To update the name, either edit it in Google Home (**Device Settings** > **Name**) or delete and re-pair the accessory.
+
+### Update Progress Bar
+Home Assistant builds local add-ons from source (`Dockerfile`) when no pre-compiled container image is declared, which causes the Supervisor UI to display 0% until the build finishes. This repository includes a GitHub Actions workflow (`.github/workflows/publish.yaml`) using the official Home Assistant Builder to push multi-arch images (`amd64`, `aarch64`) to `ghcr.io`. Once published, configuring `image:` in `config.yaml` enables native layer download progress reporting in the Supervisor.

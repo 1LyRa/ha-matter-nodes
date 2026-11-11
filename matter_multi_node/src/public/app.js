@@ -49,6 +49,7 @@ let allDevices = [];
 let activeTab = 'all';
 let cachedLogs = [];
 let logsPollTimer = null;
+const expandedPairingInfo = new Set();
 
 // Tab Switching
 filterTabs.forEach((tab) => {
@@ -291,6 +292,14 @@ function renderCard(dev) {
           <span class="metric-label">HVAC Mode</span>
           <span class="metric-value" style="font-size: 0.95rem; text-transform: capitalize;">${escapeHtml(modeStr)}</span>
         </div>
+        ${
+          dev.fanMode
+            ? `<div class="sensor-metric">
+                <span class="metric-label">Fan Mode</span>
+                <span class="metric-value" style="font-size: 0.95rem; text-transform: capitalize;">💨 ${escapeHtml(dev.fanMode)}</span>
+              </div>`
+            : ''
+        }
       </div>
     `;
   } else if (isSensor) {
@@ -348,7 +357,7 @@ function renderCard(dev) {
   // Body content: Announced vs Unannounced
   let bodyContent = '';
   if (dev.isAnnounced) {
-    bodyContent = `
+    const pairingDrawerHtml = `
       <div class="qr-box">
         ${
           dev.qrCodeDataUrl
@@ -365,6 +374,29 @@ function renderCard(dev) {
         <button class="btn-copy" onclick="copyToClipboard('${dev.manualPairingCode}', this)">Copy</button>
       </div>
     `;
+
+    if (isPaired) {
+      const isExpanded = expandedPairingInfo.has(dev.id);
+      bodyContent = `
+        <div class="paired-status-box">
+          <div class="paired-badge-row">
+            <span class="paired-icon">✅</span>
+            <div class="paired-text">
+              <span class="paired-title">Active in Google Home Fabric</span>
+              <span class="paired-sub">Matter Node is communicating locally with Google Home.</span>
+            </div>
+          </div>
+          <button class="btn-toggle-pairing" onclick="togglePairingInfo('${escapeHtml(dev.id)}')">
+            ${isExpanded ? '✕ Hide Pairing QR & Code' : '📱 Show Pairing QR & Code'}
+          </button>
+          <div id="pairing-info-${escapeHtml(dev.id)}" class="pairing-drawer" style="display: ${isExpanded ? 'block' : 'none'};">
+            ${pairingDrawerHtml}
+          </div>
+        </div>
+      `;
+    } else {
+      bodyContent = pairingDrawerHtml;
+    }
   } else {
     bodyContent = `
       <div class="unannounced-box">
@@ -467,6 +499,22 @@ window.copyToClipboard = function (text, btn) {
       }, 1500);
     })
     .catch((err) => console.error('Copy failed:', err));
+};
+
+window.togglePairingInfo = function (deviceId) {
+  const el = document.getElementById(`pairing-info-${deviceId}`);
+  if (!el) return;
+  if (expandedPairingInfo.has(deviceId)) {
+    expandedPairingInfo.delete(deviceId);
+    el.style.display = 'none';
+  } else {
+    expandedPairingInfo.add(deviceId);
+    el.style.display = 'block';
+  }
+  const btn = el.previousElementSibling;
+  if (btn && btn.classList.contains('btn-toggle-pairing')) {
+    btn.textContent = expandedPairingInfo.has(deviceId) ? '✕ Hide Pairing QR & Code' : '📱 Show Pairing QR & Code';
+  }
 };
 
 window.enableAnnouncement = async function (deviceId, btn) {

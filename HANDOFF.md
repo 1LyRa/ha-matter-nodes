@@ -2,7 +2,7 @@
 
 **Repository URL**: [https://github.com/1LyRa/ha-matter-nodes](https://github.com/1LyRa/ha-matter-nodes)  
 **Git Branch**: `main`  
-**Current Version**: `1.4.2`  
+**Current Version**: `1.5.0`  
 **Location in Workspace**: `/home/dizir/ha-matter-nodes` (`\\wsl.localhost\Ubuntu\home\dizir\ha-matter-nodes`)
 
 ---
@@ -106,6 +106,13 @@ ha-matter-nodes/
 7. **On-Demand Announcement**: Zero mDNS or port allocation on startup until user clicks "Announce as Matter Device".
 8. **UI & Themes**: Light, Dark, and Auto theme switcher following Home Assistant design guidelines, with filter tabs for All, Switches, Lights, Climate, Sensors, Active, and Unannounced.
 9. **Supervisor Update Dialog**: Added `CHANGELOG.md` files so version updates show full change notes.
+10. **AC / Thermostat Dedicated On/Off & Fan Speed (v1.5.0)**:
+    - Extended the Thermostat endpoint with Matter `OnOffServer`, giving Google Home a separate dedicated power toggle button on cards and device views.
+    - Extended the Thermostat endpoint with Matter `FanControlServer` (`MultiSpeed`, `Auto`), giving Google Home fan mode controls and speed sliders synced to `climate.set_fan_mode`.
+11. **Collapsible Pairing Information (v1.5.0)**:
+    - Commissioned devices now hide the large QR code and manual code by default, displaying a clean "Active in Google Home Fabric" badge and an on-demand expand button.
+12. **Multi-Arch Pre-built Images Workflow (v1.5.0)**:
+    - Added `.github/workflows/publish.yaml` using `home-assistant/builder` for multi-arch builds (`amd64`, `aarch64`) to `ghcr.io`.
 
 ---
 
@@ -113,6 +120,5 @@ ha-matter-nodes/
 
 When continuing this project in a new session:
 1. **Covers / Blinds**: Map `cover.*` to Matter `WindowCoveringDevice` (position and open/close tilt).
-2. **Fan Support**: Map `fan.*` to Matter `FanDevice` (speed percentages and on/off).
+2. **Dedicated Fan Entities**: Map standalone `fan.*` entities to Matter `FanDevice`.
 3. **Lock Support**: Map `lock.*` to Matter `DoorLockDevice`.
-4. **GitHub Actions CI / Pre-built Images**: Add a `.github/workflows/build.yaml` to pre-compile Docker images to GitHub Container Registry (`ghcr.io/1LyRa/ha-matter-nodes-{arch}`), reducing add-on installation time in HA from 3 minutes to ~10 seconds.

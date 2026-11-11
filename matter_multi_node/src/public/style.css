@@ -499,6 +499,76 @@ body {
   background: #475569;
 }
 
+/* Paired Status Box & Drawer */
+.paired-status-box {
+  background: var(--bg-card-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.paired-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.paired-icon {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.paired-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.paired-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--success);
+}
+
+.paired-sub {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
+
+.btn-toggle-pairing {
+  background: var(--btn-secondary-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: all 0.15s ease;
+}
+
+.btn-toggle-pairing:hover {
+  background: var(--primary-subtle);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.pairing-drawer {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-color);
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* Unannounced Placeholder Box */
 .unannounced-box {
   background: var(--bg-card);

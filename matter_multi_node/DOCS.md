@@ -9,6 +9,8 @@ Google Home frequently fails or drops devices when importing large Matter bridge
 * There is no Matter Bridge or Aggregator endpoint.
 * Google Home treats each device as an individual physical Matter device.
 * Google's backend bridge bugs are completely bypassed.
+* ACs and Thermostats include a dedicated On/Off power button and fan speed controls right inside Google Home.
+* Commissioned devices collapse their pairing codes to keep the dashboard clean.
 
 ## Installation in Home Assistant (Hyper-V VM)
 1. Install the **Samba share** or **Advanced SSH & Web Terminal** add-on in Home Assistant.

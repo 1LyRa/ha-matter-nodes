@@ -10,9 +10,11 @@ import {
   ThermostatDevice,
 } from '@matter/main/devices';
 import { PowerSourceServer } from '@matter/main/behaviors/power-source';
+import { OnOffServer } from '@matter/main/behaviors/on-off';
+import { FanControlServer } from '@matter/main/behaviors/fan-control';
 import { ThermostatServer } from '@matter/main/behaviors/thermostat';
 import { ThermostatUserInterfaceConfigurationServer } from '@matter/main/behaviors/thermostat-user-interface-configuration';
-import { Thermostat } from '@matter/main/clusters';
+import { Thermostat, FanControl } from '@matter/main/clusters';
 import QRCode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
@@ -62,6 +64,111 @@ function matterSystemModeToHa(mode, supported = []) {
     case Thermostat.SystemMode.Sleep: return supported.includes('sleep') ? 'sleep' : 'off';
     default: return 'off';
   }
+}
+
+function haFanModesToMatterSequence(modes = []) {
+  const lower = modes.map((m) => String(m).toLowerCase());
+  const hasAuto = lower.some((m) => m.includes('auto'));
+  const hasLow = lower.some((m) => m.includes('low') || m === '1' || m.includes('quiet'));
+  const hasMedium = lower.some((m) => m.includes('med') || m.includes('mid') || m === '2');
+  if (hasAuto) {
+    if (hasLow && hasMedium) return FanControl.FanModeSequence.OffLowMedHighAuto;
+    if (hasLow) return FanControl.FanModeSequence.OffLowHighAuto;
+    return FanControl.FanModeSequence.OffHighAuto;
+  }
+  if (hasLow && hasMedium) return FanControl.FanModeSequence.OffLowMedHigh;
+  if (hasLow) return FanControl.FanModeSequence.OffLowHigh;
+  return FanControl.FanModeSequence.OffHigh;
+}
+
+function haFanModeToMatter(mode) {
+  if (!mode) return FanControl.FanMode.Auto;
+  const m = String(mode).toLowerCase();
+  if (m === 'off') return FanControl.FanMode.Off;
+  if (m.includes('low') || m === '1' || m.includes('quiet') || m.includes('min')) return FanControl.FanMode.Low;
+  if (m.includes('med') || m.includes('mid') || m === '2') return FanControl.FanMode.Medium;
+  if (m.includes('high') || m === '3' || m.includes('turbo') || m.includes('max')) return FanControl.FanMode.High;
+  if (m.includes('auto')) return FanControl.FanMode.Auto;
+  return FanControl.FanMode.On;
+}
+
+function matterFanModeToHa(matterMode, supportedModes = []) {
+  if (!supportedModes || supportedModes.length === 0) return 'auto';
+  const lower = supportedModes.map((m) => ({ orig: m, low: String(m).toLowerCase() }));
+  const findMatch = (pattern) => lower.find((item) => item.low.includes(pattern))?.orig;
+
+  switch (matterMode) {
+    case FanControl.FanMode.Off:
+      return findMatch('off') || null;
+    case FanControl.FanMode.Low:
+      return findMatch('low') || findMatch('1') || findMatch('quiet') || findMatch('min') || supportedModes[0];
+    case FanControl.FanMode.Medium:
+      return findMatch('med') || findMatch('mid') || findMatch('2') || supportedModes[1] || supportedModes[0];
+    case FanControl.FanMode.High:
+      return findMatch('high') || findMatch('3') || findMatch('turbo') || findMatch('max') || supportedModes[supportedModes.length - 1];
+    case FanControl.FanMode.Auto:
+      return findMatch('auto') || 'auto';
+    default:
+      return supportedModes[0] || 'auto';
+  }
+}
+
+function haFanModesToSpeeds(modes = []) {
+  const speeds = (modes || []).filter((m) => {
+    const l = String(m).toLowerCase();
+    return l !== 'off' && l !== 'auto';
+  });
+  return speeds.length > 0 ? speeds : ['low', 'medium', 'high'];
+}
+
+function haFanModeToPercent(mode, supportedModes = []) {
+  if (!mode || String(mode).toLowerCase() === 'off') return 0;
+  if (String(mode).toLowerCase() === 'auto') return 100;
+  const speeds = haFanModesToSpeeds(supportedModes);
+  const idx = speeds.findIndex((s) => String(s).toLowerCase() === String(mode).toLowerCase());
+  if (idx === -1) {
+    const m = haFanModeToMatter(mode);
+    if (m === FanControl.FanMode.Low) return 33;
+    if (m === FanControl.FanMode.Medium) return 66;
+    if (m === FanControl.FanMode.High) return 100;
+    return 100;
+  }
+  return Math.round(((idx + 1) / speeds.length) * 100);
+}
+
+function percentToHaFanMode(percent, supportedModes = []) {
+  if (!supportedModes || supportedModes.length === 0) return 'auto';
+  if (percent === 0 && supportedModes.some((m) => String(m).toLowerCase() === 'off')) {
+    return supportedModes.find((m) => String(m).toLowerCase() === 'off');
+  }
+  const speeds = haFanModesToSpeeds(supportedModes);
+  const clamped = Math.max(1, Math.min(100, percent));
+  const idx = Math.min(speeds.length - 1, Math.floor((clamped - 1) / (100 / speeds.length)));
+  return speeds[idx];
+}
+
+function haFanModeToSpeed(mode, supportedModes = []) {
+  if (!mode || String(mode).toLowerCase() === 'off') return 0;
+  const speeds = haFanModesToSpeeds(supportedModes);
+  const idx = speeds.findIndex((s) => String(s).toLowerCase() === String(mode).toLowerCase());
+  if (idx === -1) {
+    const m = haFanModeToMatter(mode);
+    if (m === FanControl.FanMode.Low) return 1;
+    if (m === FanControl.FanMode.Medium) return 2;
+    if (m === FanControl.FanMode.High) return Math.min(3, speeds.length);
+    return 1;
+  }
+  return idx + 1;
+}
+
+function speedToHaFanMode(speed, supportedModes = []) {
+  if (!supportedModes || supportedModes.length === 0) return 'auto';
+  if (speed === 0 && supportedModes.some((m) => String(m).toLowerCase() === 'off')) {
+    return supportedModes.find((m) => String(m).toLowerCase() === 'off');
+  }
+  const speeds = haFanModesToSpeeds(supportedModes);
+  const idx = Math.max(0, Math.min(speeds.length - 1, speed - 1));
+  return speeds[idx];
 }
 
 function convertHumidityToMatter(value) {
@@ -252,6 +359,8 @@ export class MatterManager {
         const hasCool = supportedModes.includes('cool');
         const hasHeat = supportedModes.includes('heat');
         const hasAuto = supportedModes.includes('auto') || supportedModes.includes('heat_cool');
+        const fanModes = stateObj.attributes?.fan_modes || [];
+        const fanMode = stateObj.attributes?.fan_mode || null;
 
         const currentTemp = stateObj.attributes?.current_temperature ?? null;
         const targetTemp = stateObj.attributes?.temperature ?? null;
@@ -273,6 +382,8 @@ export class MatterManager {
           hvacMode,
           hvacAction,
           supportedModes,
+          fanModes,
+          fanMode,
           hasCool: hasCool || (!hasHeat && !hasCool),
           hasHeat,
           hasAuto,
@@ -450,9 +561,23 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.4.0',
+          softwareVersionString: '1.5.0',
         },
       });
+
+      // Ensure stored node basic information is refreshed with current HA friendly name
+      try {
+        await node.set({
+          basicInformation: {
+            nodeLabel: dev.friendlyName.slice(0, 32),
+            productName: dev.friendlyName.slice(0, 32),
+            productLabel: dev.friendlyName.slice(0, 64),
+            softwareVersionString: '1.5.0',
+          },
+        });
+      } catch (err) {
+        // Ignored if uninitialized
+      }
 
       const endpoints = {};
       let updateFromHA = async () => {};
@@ -717,10 +842,17 @@ export class MatterManager {
         if (dev.hasCool) features.push(Thermostat.Feature.Cooling);
         if (dev.hasAuto) features.push(Thermostat.Feature.AutoMode);
 
-        const ThermostatClass = ThermostatDevice.with(
+        const hasFanControl = Array.isArray(dev.fanModes) && dev.fanModes.length > 0;
+        const thermostatBehaviors = [
           ThermostatServer.with(...features),
-          ThermostatUserInterfaceConfigurationServer
-        );
+          ThermostatUserInterfaceConfigurationServer,
+          OnOffServer,
+        ];
+        if (hasFanControl) {
+          thermostatBehaviors.push(FanControlServer.with(FanControl.Feature.MultiSpeed, FanControl.Feature.Auto));
+        }
+
+        const ThermostatClass = ThermostatDevice.with(...thermostatBehaviors);
 
         const localTemp = convertTemperatureToMatter(dev.currentTemp, dev.tempUnit) ?? 2100;
         const mTarget = dev.targetTemp !== null ? convertTemperatureToMatter(dev.targetTemp, dev.tempUnit) : 2200;
@@ -769,13 +901,36 @@ export class MatterManager {
           tConfig.minSetpointDeadBand = 15;
         }
 
-        const endpoint = await node.add(ThermostatClass, {
+        const endpointConfig = {
           id: 'thermostat',
           thermostat: tConfig,
           thermostatUserInterfaceConfiguration: {
             temperatureDisplayMode: (dev.tempUnit === '°F' || dev.tempUnit === 'F') ? 1 : 0,
           },
-        });
+          onOff: {
+            onOff: dev.isOn,
+          },
+        };
+
+        if (hasFanControl) {
+          const fanSeq = haFanModesToMatterSequence(dev.fanModes);
+          const currentFM = haFanModeToMatter(dev.fanMode);
+          const currentPct = haFanModeToPercent(dev.fanMode, dev.fanModes);
+          const speedMax = Math.max(1, haFanModesToSpeeds(dev.fanModes).length);
+          const currentSpd = haFanModeToSpeed(dev.fanMode, dev.fanModes);
+
+          endpointConfig.fanControl = {
+            fanMode: currentFM,
+            fanModeSequence: fanSeq,
+            percentSetting: currentPct,
+            percentCurrent: currentPct,
+            speedMax: speedMax,
+            speedSetting: currentSpd,
+            speedCurrent: currentSpd,
+          };
+        }
+
+        const endpoint = await node.add(ThermostatClass, endpointConfig);
         endpoints.thermostat = endpoint;
 
         let updatingFromHA = false;
@@ -809,6 +964,7 @@ export class MatterManager {
           }, 120);
         };
 
+        // Thermostat HVAC Mode changes
         endpoint.events.thermostat.events.systemMode$Changed.on(async (newMode) => {
           if (updatingFromHA) return;
           const targetHaMode = matterSystemModeToHa(newMode, dev.supportedModes);
@@ -819,6 +975,88 @@ export class MatterManager {
           info.isOn = dev.isOn;
           await this.haClient.callService('climate', 'set_hvac_mode', dev.entityId, { hvac_mode: targetHaMode });
         });
+
+        // Dedicated On/Off Power Button for Google Home
+        const onOffEvent = endpoint.events.onOff?.events?.onOff$Changed || endpoint.events.onOff?.events?.onOff$Changing;
+        if (onOffEvent) {
+          onOffEvent.on(async (newValue) => {
+            if (updatingFromHA) return;
+            console.log(`[Matter Node: ${dev.friendlyName}] Climate power toggle command: ${newValue ? 'ON' : 'OFF'}`);
+            dev.isOn = newValue;
+            info.isOn = newValue;
+
+            if (newValue) {
+              try {
+                await this.haClient.callService('climate', 'turn_on', dev.entityId);
+              } catch (err) {
+                const activeMode = dev.supportedModes.find((m) => m !== 'off') || 'cool';
+                console.log(`[Matter Node: ${dev.friendlyName}] turn_on fallback to set_hvac_mode: ${activeMode}`);
+                await this.haClient.callService('climate', 'set_hvac_mode', dev.entityId, { hvac_mode: activeMode });
+              }
+            } else {
+              try {
+                await this.haClient.callService('climate', 'turn_off', dev.entityId);
+              } catch (err) {
+                console.log(`[Matter Node: ${dev.friendlyName}] turn_off fallback to set_hvac_mode: off`);
+                await this.haClient.callService('climate', 'set_hvac_mode', dev.entityId, { hvac_mode: 'off' });
+              }
+            }
+          });
+        }
+
+        // Fan Speed & Fan Mode for Google Home
+        if (hasFanControl && endpoint.events.fanControl) {
+          let fanDebounceTimer = null;
+
+          const fanModeEvent = endpoint.events.fanControl.events?.fanMode$Changed || endpoint.events.fanControl.events?.fanMode$Changing;
+          if (fanModeEvent) {
+            fanModeEvent.on(async (newMode) => {
+              if (updatingFromHA) return;
+              const targetHaMode = matterFanModeToHa(newMode, dev.fanModes);
+              if (!targetHaMode) return;
+              console.log(`[Matter Node: ${dev.friendlyName}] Fan mode command: ${newMode} -> HA fan_mode: ${targetHaMode}`);
+              dev.fanMode = targetHaMode;
+              info.fanMode = targetHaMode;
+              await this.haClient.callService('climate', 'set_fan_mode', dev.entityId, { fan_mode: targetHaMode });
+            });
+          }
+
+          const handleSpeedPercentChange = (pct) => {
+            if (updatingFromHA || pct === null || pct === undefined) return;
+            if (fanDebounceTimer) clearTimeout(fanDebounceTimer);
+            fanDebounceTimer = setTimeout(async () => {
+              fanDebounceTimer = null;
+              const targetHaMode = percentToHaFanMode(pct, dev.fanModes);
+              if (!targetHaMode) return;
+              console.log(`[Matter Node: ${dev.friendlyName}] Fan speed percent command: ${pct}% -> HA fan_mode: ${targetHaMode}`);
+              dev.fanMode = targetHaMode;
+              info.fanMode = targetHaMode;
+              await this.haClient.callService('climate', 'set_fan_mode', dev.entityId, { fan_mode: targetHaMode });
+            }, 100);
+          };
+
+          const pctEvent = endpoint.events.fanControl.events?.percentSetting$Changing || endpoint.events.fanControl.events?.percentSetting$Changed;
+          if (pctEvent) {
+            pctEvent.on(handleSpeedPercentChange);
+          }
+
+          const spdEvent = endpoint.events.fanControl.events?.speedSetting$Changing || endpoint.events.fanControl.events?.speedSetting$Changed;
+          if (spdEvent) {
+            spdEvent.on((spd) => {
+              if (updatingFromHA || spd === null || spd === undefined) return;
+              if (fanDebounceTimer) clearTimeout(fanDebounceTimer);
+              fanDebounceTimer = setTimeout(async () => {
+                fanDebounceTimer = null;
+                const targetHaMode = speedToHaFanMode(spd, dev.fanModes);
+                if (!targetHaMode) return;
+                console.log(`[Matter Node: ${dev.friendlyName}] Fan speed step command: ${spd} -> HA fan_mode: ${targetHaMode}`);
+                dev.fanMode = targetHaMode;
+                info.fanMode = targetHaMode;
+                await this.haClient.callService('climate', 'set_fan_mode', dev.entityId, { fan_mode: targetHaMode });
+              }, 100);
+            });
+          }
+        }
 
         if (endpoint.events.thermostat.events.occupiedCoolingSetpoint$Changing) {
           endpoint.events.thermostat.events.occupiedCoolingSetpoint$Changing.on((newCool) => {
@@ -858,6 +1096,33 @@ export class MatterManager {
               await endpoint.set({ thermostat: { systemMode: targetMMode } });
               info.hvacMode = newDev.hvacMode;
               info.isOn = newDev.hvacMode !== 'off';
+            }
+
+            if (endpoint.state.onOff.onOff !== newDev.isOn) {
+              await endpoint.set({ onOff: { onOff: newDev.isOn } });
+              info.isOn = newDev.isOn;
+            }
+
+            if (hasFanControl && endpoint.state.fanControl && newDev.fanMode) {
+              const targetFM = haFanModeToMatter(newDev.fanMode);
+              const targetPct = haFanModeToPercent(newDev.fanMode, dev.fanModes);
+              const targetSpd = haFanModeToSpeed(newDev.fanMode, dev.fanModes);
+
+              const fcUpdates = {};
+              if (endpoint.state.fanControl.fanMode !== targetFM) fcUpdates.fanMode = targetFM;
+              if (endpoint.state.fanControl.percentSetting !== targetPct) {
+                fcUpdates.percentSetting = targetPct;
+                fcUpdates.percentCurrent = targetPct;
+              }
+              if (endpoint.state.fanControl.speedSetting !== targetSpd) {
+                fcUpdates.speedSetting = targetSpd;
+                fcUpdates.speedCurrent = targetSpd;
+              }
+
+              if (Object.keys(fcUpdates).length > 0) {
+                await endpoint.set({ fanControl: fcUpdates });
+                info.fanMode = newDev.fanMode;
+              }
             }
 
             if (newDev.targetTemp !== null && newDev.targetTemp !== undefined) {
@@ -925,6 +1190,8 @@ export class MatterManager {
         targetTempLow: dev.targetTempLow ?? null,
         targetTempHigh: dev.targetTempHigh ?? null,
         supportedModes: dev.supportedModes || [],
+        fanModes: dev.fanModes || [],
+        fanMode: dev.fanMode || null,
         port,
         discriminator,
         passcode: this.config.passcode,
@@ -1048,6 +1315,12 @@ export class MatterManager {
       if (change.attributes?.hvac_action !== undefined) {
         dev.hvacAction = change.attributes.hvac_action;
       }
+      if (change.attributes?.fan_mode !== undefined) {
+        dev.fanMode = change.attributes.fan_mode;
+      }
+      if (change.attributes?.fan_modes !== undefined) {
+        dev.fanModes = change.attributes.fan_modes;
+      }
     } else if (dev.deviceKind === 'sensor') {
       const numVal = parseFloat(change.raw_state);
       if (entity_id === dev.tempEntity) {
@@ -1092,6 +1365,8 @@ export class MatterManager {
           targetTempLow: dev.targetTempLow ?? null,
           targetTempHigh: dev.targetTempHigh ?? null,
           supportedModes: dev.supportedModes || [],
+          fanModes: dev.fanModes || [],
+          fanMode: dev.fanMode || null,
           port: savedConfig?.port || null,
           discriminator: savedConfig?.discriminator || null,
           passcode: this.config.passcode,
