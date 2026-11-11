@@ -1542,7 +1542,7 @@ export class MatterManager {
           await entry.node.set({
             basicInformation: {
               hardwareVersionString: haVerString,
-              softwareVersionString: '1.7.5',
+              softwareVersionString: '1.7.6',
             },
           });
         } catch (_) {}
@@ -1643,7 +1643,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: haVerString,
           softwareVersion: 1,
-          softwareVersionString: '1.7.5',
+          softwareVersionString: '1.7.6',
         },
       });
 
@@ -1655,7 +1655,7 @@ export class MatterManager {
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
             hardwareVersionString: haVerString,
-            softwareVersionString: '1.7.5',
+            softwareVersionString: '1.7.6',
           },
         });
       } catch (err) {

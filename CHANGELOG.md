@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.6
+
+- **Security Rating Improvement (Score 5 -> 6)**:
+  - Removed unused elevated Supervisor permissions (`hassio_api: true` and `hassio_role: "manager"`).
+  - The add-on only requires Home Assistant Core WebSocket access (`homeassistant_api: true`), eliminating unnecessary Supervisor container permissions and raising the official Home Assistant security rating to **6 / 8** (the maximum rating for host-networked Matter/mDNS applications).
+
 ## 1.7.5
 
 - **Matter AirQuality Cluster Conformance Fix**:
