@@ -10,7 +10,7 @@ Custom Home Assistant Add-on repository to expose Home Assistant switches as **i
 2. Click the **three dots (top right corner)** and select **Repositories**.
 3. Paste the URL of this repository:
    ```
-   https://github.com/<YOUR_GITHUB_USERNAME>/<YOUR_REPO_NAME>
+   https://github.com/1LyRa/ha-matter-nodes
    ```
 4. Click **Add**.
 5. Close the dialog. The store will refresh, and you will see **Matter Multi-Node** listed in the store.
