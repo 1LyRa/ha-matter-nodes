@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="auto">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,9 +8,14 @@
 </head>
 <body>
   <div class="app-container">
+    <!-- Header -->
     <header class="app-header">
       <div class="header-left">
-        <div class="logo-icon">⚡</div>
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" class="ha-icon">
+            <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M11,6V13.25L16.2,16.34L17,15.08L12.5,12.42V6H11Z" />
+          </svg>
+        </div>
         <div>
           <h1>Matter Multi-Node</h1>
           <p class="subtitle">Standalone Matter switches for Google Home (Bypasses Matter Bridge)</p>
@@ -18,34 +23,52 @@
       </div>
       <div class="header-right">
         <div id="haStatusBadge" class="status-badge connecting">Connecting to HA...</div>
-        <div id="nodeCountBadge" class="status-badge count">0 Nodes</div>
+        <div id="nodeCountBadge" class="status-badge count">0 Active / 0 Total</div>
+
+        <!-- Theme Picker -->
+        <div class="theme-switcher" id="themeSwitcher">
+          <button class="theme-btn active" data-theme="auto" title="Follow system theme">Auto</button>
+          <button class="theme-btn" data-theme="light" title="Light theme">Light</button>
+          <button class="theme-btn" data-theme="dark" title="Dark theme">Dark</button>
+        </div>
       </div>
     </header>
 
+    <!-- Instructions banner -->
     <div class="instructions-card">
       <div class="instruction-header">
         <span class="info-icon">ℹ️</span>
-        <h3>How to Pair with Google Home</h3>
+        <h3>How It Works</h3>
       </div>
+      <p class="instruction-desc">
+        Switches are <strong>not announced by default</strong> to keep your network quiet and UDP ports free.
+        Click <strong>"Announce as Matter Device"</strong> on any switch you want in Google Home. It will allocate a dedicated UDP port (starting at 5541) and generate its Matter QR code.
+      </p>
       <ol class="instruction-steps">
-        <li>Open the <strong>Google Home</strong> app on your phone.</li>
-        <li>Tap <strong>Devices</strong> &gt; <strong>+ (Add)</strong> &gt; <strong>Matter-enabled device</strong>.</li>
-        <li>Scan the <strong>QR Code</strong> of the switch below directly from your screen, or choose <em>"Set up without code"</em> and enter the <strong>Manual Pairing Code</strong>.</li>
-        <li>Repeat for any switch you need in Google Home. Once paired, Google Home controls it directly over local Matter!</li>
+        <li>Click <strong>"Announce as Matter Device"</strong> on your desired switch below.</li>
+        <li>Open <strong>Google Home</strong> on your phone &gt; <strong>Devices</strong> &gt; <strong>+ (Add)</strong> &gt; <strong>Matter-enabled device</strong>.</li>
+        <li>Scan the QR code (or enter the manual pairing code). Once paired, Google Home controls it directly via local Matter!</li>
       </ol>
     </div>
 
+    <!-- Toolbar: Tabs + Search -->
     <div class="toolbar">
-      <input type="text" id="searchInput" placeholder="Filter switches by name or entity ID..." class="search-input">
-      <div class="toolbar-info">
-        <span>Starting UDP Port: <strong id="startPortLabel">5541</strong></span>
+      <div class="filter-tabs">
+        <button class="tab-btn active" data-tab="all">All Switches (<span id="countAll">0</span>)</button>
+        <button class="tab-btn" data-tab="active">Active Matter (<span id="countActive">0</span>)</button>
+        <button class="tab-btn" data-tab="inactive">Unannounced (<span id="countInactive">0</span>)</button>
+      </div>
+
+      <div class="search-wrapper">
+        <input type="text" id="searchInput" placeholder="Filter switches..." class="search-input">
       </div>
     </div>
 
+    <!-- Cards Grid -->
     <main id="cardsGrid" class="cards-grid">
       <div class="loading-state">
         <div class="spinner"></div>
-        <p>Discovering Home Assistant switches and generating Matter nodes...</p>
+        <p>Discovering Home Assistant switches...</p>
       </div>
     </main>
   </div>

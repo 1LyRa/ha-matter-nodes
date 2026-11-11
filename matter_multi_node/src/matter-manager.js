@@ -8,10 +8,12 @@ export class MatterManager {
   constructor(config, haClient) {
     this.config = config;
     this.haClient = haClient;
-    this.nodes = new Map(); // entity_id -> { node, endpoint, info }
-    this.isInitialized = false;
+    this.nodes = new Map(); // entity_id -> { node, endpoint, info, setFromHA }
+    this.discoveredEntities = new Map(); // entity_id -> { friendlyName, state, rawState }
+    this.enabledEntitiesFile = path.join(this.config.storagePath, 'enabled_entities.json');
+    this.enabledConfig = this.loadEnabledConfig(); // entityId -> { port, discriminator, enabled: true }
 
-    // Configure storage path
+    // Configure Matter root storage
     if (this.config.storagePath) {
       if (!fs.existsSync(this.config.storagePath)) {
         fs.mkdirSync(this.config.storagePath, { recursive: true });
@@ -21,57 +23,125 @@ export class MatterManager {
     }
   }
 
+  loadEnabledConfig() {
+    try {
+      if (fs.existsSync(this.enabledEntitiesFile)) {
+        const raw = fs.readFileSync(this.enabledEntitiesFile, 'utf8');
+        const data = JSON.parse(raw);
+        console.log(`[Matter Manager] Loaded ${Object.keys(data).length} saved device configurations.`);
+        return data;
+      }
+    } catch (err) {
+      console.warn('[Matter Manager] Could not load enabled_entities.json:', err.message);
+    }
+    return {};
+  }
+
+  saveEnabledConfig() {
+    try {
+      const dir = path.dirname(this.enabledEntitiesFile);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(this.enabledEntitiesFile, JSON.stringify(this.enabledConfig, null, 2), 'utf8');
+    } catch (err) {
+      console.error('[Matter Manager] Failed to save enabled_entities.json:', err.message);
+    }
+  }
+
+  allocatePortAndDiscriminator(entityId) {
+    // If already assigned in config, preserve it
+    if (this.enabledConfig[entityId]?.port) {
+      return {
+        port: this.enabledConfig[entityId].port,
+        discriminator: this.enabledConfig[entityId].discriminator,
+      };
+    }
+
+    // Find all currently used ports and discriminators
+    const usedPorts = new Set(Object.values(this.enabledConfig).map((c) => c.port).filter(Boolean));
+    const usedDiscs = new Set(Object.values(this.enabledConfig).map((c) => c.discriminator).filter(Boolean));
+
+    let port = this.config.startPort;
+    while (usedPorts.has(port)) {
+      port++;
+    }
+
+    let discriminator = this.config.discriminatorStart;
+    while (usedDiscs.has(discriminator)) {
+      discriminator = (discriminator + 1) % 4096;
+    }
+
+    return { port, discriminator };
+  }
+
   shouldIncludeEntity(entityId) {
-    // If explicit include list is provided
     if (this.config.includeEntities.length > 0) {
       return this.config.includeEntities.includes(entityId);
     }
-
-    // If explicit exclude list
     if (this.config.excludeEntities.includes(entityId)) {
       return false;
     }
-
-    // Domain filter (e.g. switch, input_boolean)
     const domain = entityId.split('.')[0];
     return this.config.filterDomains.includes(domain);
   }
 
   async syncWithHAStates(statesMap) {
-    console.log('[Matter Manager] Synchronizing entities with Home Assistant states...');
-    let index = 0;
+    console.log('[Matter Manager] Synchronizing discovered entities with Home Assistant...');
 
     for (const [entityId, stateObj] of statesMap.entries()) {
       if (!this.shouldIncludeEntity(entityId)) {
         continue;
       }
 
+      const friendlyName = stateObj.attributes?.friendly_name || entityId;
+      const isOn = stateObj.state === 'on';
+
+      this.discoveredEntities.set(entityId, {
+        entityId,
+        friendlyName,
+        isOn,
+        rawState: stateObj.state,
+      });
+
+      // If already running, update state
       if (this.nodes.has(entityId)) {
-        // Node already exists, update state
         const entry = this.nodes.get(entityId);
-        const isOn = stateObj.state === 'on';
-        if (entry.endpoint.state.onOff.onOff !== isOn) {
-          await entry.endpoint.set({ onOff: { onOff: isOn } });
-          entry.info.isOn = isOn;
-        }
+        await entry.setFromHA(isOn);
         continue;
       }
 
-      const port = this.config.startPort + index;
-      const discriminator = (this.config.discriminatorStart + index) % 4096;
-      const friendlyName = stateObj.attributes?.friendly_name || entityId;
-
-      await this.createNodeForEntity(entityId, friendlyName, port, discriminator, stateObj.state === 'on');
-      index++;
+      // Check if entity is explicitly enabled
+      const isEnabled = this.enabledConfig[entityId]?.enabled === true;
+      if (isEnabled) {
+        await this.startNodeForEntity(entityId);
+      }
     }
 
-    this.isInitialized = true;
-    console.log(`[Matter Manager] Successfully initialized ${this.nodes.size} standalone Matter nodes.`);
+    console.log(`[Matter Manager] Discovered ${this.discoveredEntities.size} eligible HA switches (${this.nodes.size} active Matter nodes).`);
   }
 
-  async createNodeForEntity(entityId, friendlyName, port, discriminator, initialOn) {
+  async startNodeForEntity(entityId) {
+    if (this.nodes.has(entityId)) {
+      return this.nodes.get(entityId).info;
+    }
+
+    const discovered = this.discoveredEntities.get(entityId);
+    const friendlyName = discovered?.friendlyName || entityId;
+    const initialOn = discovered?.isOn || false;
+
+    const { port, discriminator } = this.allocatePortAndDiscriminator(entityId);
+
+    // Save configuration
+    this.enabledConfig[entityId] = {
+      port,
+      discriminator,
+      enabled: true,
+    };
+    this.saveEnabledConfig();
+
     const sanitizedId = entityId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    console.log(`[Matter Manager] Creating Matter Node for [${entityId}] ("${friendlyName}") on UDP port ${port}, discriminator ${discriminator}...`);
+    console.log(`[Matter Manager] Starting standalone Matter node for [${entityId}] on port ${port}, discriminator ${discriminator}...`);
 
     try {
       const node = await ServerNode.create({
@@ -96,12 +166,10 @@ export class MatterManager {
         id: 'switch',
       });
 
-      // Set initial state
       if (initialOn) {
         await endpoint.set({ onOff: { onOff: true } });
       }
 
-      // Codes for pairing
       const pairingCodes = node.state.commissioning.pairingCodes || {};
       const manualPairingCode = pairingCodes.manualPairingCode || 'N/A';
       const qrPairingCode = pairingCodes.qrPairingCode || '';
@@ -118,7 +186,7 @@ export class MatterManager {
             },
           });
         } catch (err) {
-          console.warn(`[Matter Manager] Failed to generate QR code data URL for ${entityId}:`, err.message);
+          console.warn(`[Matter Manager] QR generation failed for ${entityId}:`, err.message);
         }
       }
 
@@ -134,24 +202,23 @@ export class MatterManager {
         csaQrUrl: qrPairingCode ? `https://project-chip.github.io/connectedhomeip/qrcode.html?data=${encodeURIComponent(qrPairingCode)}` : '',
         isOn: initialOn,
         isCommissioned: !!node.lifecycle.isCommissioned,
+        isAnnounced: true,
       };
 
-      // Handle command from Google Home (or other Matter controller)
       let updatingFromHA = false;
       endpoint.events.onOff.events.onOff$Changed.on(async (newValue) => {
         if (updatingFromHA) return;
         console.log(`[Matter Node: ${friendlyName}] Received Matter command: ${newValue ? 'ON' : 'OFF'}`);
         info.isOn = newValue;
+        if (discovered) discovered.isOn = newValue;
         await this.haClient.setEntityState(entityId, newValue);
       });
 
-      // Start the Matter node server
       await node.start();
 
-      // Update commissioned state on changes
       node.events.commissioning?.fabrics$Changed?.on?.(() => {
         info.isCommissioned = !!node.lifecycle.isCommissioned;
-        console.log(`[Matter Node: ${friendlyName}] Commissioning fabrics updated. Commissioned: ${info.isCommissioned}`);
+        console.log(`[Matter Node: ${friendlyName}] Fabrics updated. Commissioned: ${info.isCommissioned}`);
       });
 
       this.nodes.set(entityId, {
@@ -164,6 +231,7 @@ export class MatterManager {
             try {
               await endpoint.set({ onOff: { onOff: newVal } });
               info.isOn = newVal;
+              if (discovered) discovered.isOn = newVal;
             } finally {
               updatingFromHA = false;
             }
@@ -171,37 +239,95 @@ export class MatterManager {
         },
       });
 
-      console.log(`[Matter Node: ${friendlyName}] Running! Pairing Code: ${manualPairingCode}`);
+      console.log(`[Matter Node: ${friendlyName}] Announcing on UDP ${port}! Pairing code: ${manualPairingCode}`);
+      return info;
     } catch (err) {
-      console.error(`[Matter Manager] Failed to create node for ${entityId}:`, err);
+      console.error(`[Matter Manager] Failed to start Matter node for ${entityId}:`, err);
+      throw err;
     }
+  }
+
+  async stopNodeForEntity(entityId) {
+    if (this.enabledConfig[entityId]) {
+      this.enabledConfig[entityId].enabled = false;
+      this.saveEnabledConfig();
+    }
+
+    const entry = this.nodes.get(entityId);
+    if (!entry) return;
+
+    console.log(`[Matter Manager] Stopping Matter node for ${entityId}...`);
+    try {
+      await entry.node.close();
+    } catch (err) {
+      console.warn(`[Matter Manager] Error while closing node for ${entityId}:`, err.message);
+    }
+    this.nodes.delete(entityId);
   }
 
   async handleHAStateChange(change) {
-    const entry = this.nodes.get(change.entity_id);
+    const { entity_id, state } = change;
+    const discovered = this.discoveredEntities.get(entity_id);
+    if (discovered) {
+      discovered.isOn = state;
+    }
+
+    const entry = this.nodes.get(entity_id);
     if (entry) {
-      await entry.setFromHA(change.state);
+      await entry.setFromHA(state);
     }
   }
 
-  getNodesInfo() {
-    return Array.from(this.nodes.values()).map((entry) => ({
-      ...entry.info,
-      isCommissioned: !!entry.node.lifecycle.isCommissioned,
-      isOn: entry.endpoint.state.onOff.onOff,
-    }));
+  getAllEntitiesInfo() {
+    const result = [];
+
+    for (const [entityId, discovered] of this.discoveredEntities.entries()) {
+      const activeEntry = this.nodes.get(entityId);
+
+      if (activeEntry) {
+        result.push({
+          ...activeEntry.info,
+          isCommissioned: !!activeEntry.node.lifecycle.isCommissioned,
+          isOn: activeEntry.endpoint.state.onOff.onOff,
+          isAnnounced: true,
+        });
+      } else {
+        const savedConfig = this.enabledConfig[entityId];
+        result.push({
+          entityId,
+          friendlyName: discovered.friendlyName,
+          port: savedConfig?.port || null,
+          discriminator: savedConfig?.discriminator || null,
+          passcode: this.config.passcode,
+          manualPairingCode: null,
+          qrPairingCode: null,
+          qrCodeDataUrl: null,
+          csaQrUrl: null,
+          isOn: discovered.isOn,
+          isCommissioned: false,
+          isAnnounced: false,
+        });
+      }
+    }
+
+    // Sort: Announced first, then alphabetically by friendlyName
+    return result.sort((a, b) => {
+      if (a.isAnnounced !== b.isAnnounced) {
+        return a.isAnnounced ? -1 : 1;
+      }
+      return a.friendlyName.localeCompare(b.friendlyName);
+    });
   }
 
   async toggleFromWeb(entityId) {
-    const entry = this.nodes.get(entityId);
-    if (!entry) return false;
-    const currentState = entry.endpoint.state.onOff.onOff;
-    const newState = !currentState;
+    const discovered = this.discoveredEntities.get(entityId);
+    if (!discovered) return false;
+    const newState = !discovered.isOn;
     return await this.haClient.setEntityState(entityId, newState);
   }
 
   async close() {
-    console.log('[Matter Manager] Closing all Matter nodes...');
+    console.log('[Matter Manager] Closing all active Matter nodes...');
     for (const [entityId, entry] of this.nodes.entries()) {
       try {
         await entry.node.close();
