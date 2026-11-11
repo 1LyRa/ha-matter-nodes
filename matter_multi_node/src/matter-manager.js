@@ -561,7 +561,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.5.1',
+          softwareVersionString: '1.5.2',
         },
       });
 
@@ -572,7 +572,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.5.1',
+            softwareVersionString: '1.5.2',
           },
         });
       } catch (err) {

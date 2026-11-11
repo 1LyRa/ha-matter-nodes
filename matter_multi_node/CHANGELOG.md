@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.2
+
+- **Distinctive Multi-Node Sidebar Icon (`mdi:hub`)**: Replaced `mdi:matter` with `mdi:hub` in the Home Assistant configuration. This differentiates Matter Multi-Node from the official Matter Server add-on on the sidebar (which also uses `mdi:matter`), displaying a star-topology hub with connected satellite nodes to represent multi-node Matter.
+
 ## 1.5.1
 
 - **Official Matter Sidebar Icon**: Updated `panel_icon: "mdi:matter"` in Home Assistant configuration to display the official Matter logo on the sidebar instead of a generic cube icon.
