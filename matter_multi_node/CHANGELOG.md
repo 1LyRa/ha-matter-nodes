@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+
+- **Sensors Support**: Added full support for Temperature, Humidity, and Battery sensors.
+- **Smart Sensor Grouping**: Automatically groups composite multi-sensor entities (e.g. `_temperature`, `_humidity`, `_battery`) into a single unified Matter device node with 1 QR code.
+- **Real-Time Sensor Sync**: Converts temperature (Celsius/Fahrenheit), relative humidity, and battery percent to Matter cluster specifications in real time.
+- **Filter Tabs**: Added quick tabs for "All", "Switches", "Sensors", "Active", and "Unannounced".
+- **Documentation Cleanup**: Cleaned up README and documentation to focus entirely on Home Assistant Add-on operation.
+
 ## 1.1.0
 
 - **Theme System**: Added Light, Dark, and Auto theme switcher matching the Home Assistant design system (persisted in local storage).

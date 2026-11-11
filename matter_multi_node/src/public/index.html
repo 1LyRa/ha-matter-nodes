@@ -18,7 +18,7 @@
         </div>
         <div>
           <h1>Matter Multi-Node</h1>
-          <p class="subtitle">Standalone Matter switches for Google Home (Bypasses Matter Bridge)</p>
+          <p class="subtitle">Standalone Matter switches & sensors for Google Home (Bypasses Matter Bridge)</p>
         </div>
       </div>
       <div class="header-right">
@@ -41,26 +41,28 @@
         <h3>How It Works</h3>
       </div>
       <p class="instruction-desc">
-        Switches are <strong>not announced by default</strong> to keep your network quiet and UDP ports free.
-        Click <strong>"Announce as Matter Device"</strong> on any switch you want in Google Home. It will allocate a dedicated UDP port (starting at 5541) and generate its Matter QR code.
+        Devices are <strong>not announced by default</strong> to prevent network congestion.
+        Click <strong>"Announce as Matter Device"</strong> on any switch or sensor you want in Google Home. It allocates a dedicated UDP port (starting at 5541) and generates its QR code.
       </p>
       <ol class="instruction-steps">
-        <li>Click <strong>"Announce as Matter Device"</strong> on your desired switch below.</li>
+        <li>Click <strong>"Announce as Matter Device"</strong> on your desired switch or sensor below.</li>
         <li>Open <strong>Google Home</strong> on your phone &gt; <strong>Devices</strong> &gt; <strong>+ (Add)</strong> &gt; <strong>Matter-enabled device</strong>.</li>
-        <li>Scan the QR code (or enter the manual pairing code). Once paired, Google Home controls it directly via local Matter!</li>
+        <li>Scan the QR code (or enter the manual pairing code). Once paired, Google Home connects directly via local Matter!</li>
       </ol>
     </div>
 
     <!-- Toolbar: Tabs + Search -->
     <div class="toolbar">
       <div class="filter-tabs">
-        <button class="tab-btn active" data-tab="all">All Switches (<span id="countAll">0</span>)</button>
-        <button class="tab-btn" data-tab="active">Active Matter (<span id="countActive">0</span>)</button>
+        <button class="tab-btn active" data-tab="all">All (<span id="countAll">0</span>)</button>
+        <button class="tab-btn" data-tab="switch">Switches (<span id="countSwitches">0</span>)</button>
+        <button class="tab-btn" data-tab="sensor">Sensors (<span id="countSensors">0</span>)</button>
+        <button class="tab-btn" data-tab="active">Active (<span id="countActive">0</span>)</button>
         <button class="tab-btn" data-tab="inactive">Unannounced (<span id="countInactive">0</span>)</button>
       </div>
 
       <div class="search-wrapper">
-        <input type="text" id="searchInput" placeholder="Filter switches..." class="search-input">
+        <input type="text" id="searchInput" placeholder="Filter devices..." class="search-input">
       </div>
     </div>
 
@@ -68,7 +70,7 @@
     <main id="cardsGrid" class="cards-grid">
       <div class="loading-state">
         <div class="spinner"></div>
-        <p>Discovering Home Assistant switches...</p>
+        <p>Discovering Home Assistant devices...</p>
       </div>
     </main>
   </div>

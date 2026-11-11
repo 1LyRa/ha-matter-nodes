@@ -14,7 +14,6 @@ export function loadConfig() {
       console.warn(`[Config] Failed to parse ${optionsPath}:`, err.message);
     }
   } else {
-    // Check local directory config.json fallback
     const localConfigPath = path.resolve('./config.json');
     if (fs.existsSync(localConfigPath)) {
       try {
@@ -36,13 +35,11 @@ export function loadConfig() {
     haToken = supervisorToken;
     console.log('[Config] Operating inside Home Assistant Supervisor environment.');
   } else if (haWsUrl) {
-    // Normalize HA URL to WebSocket
     haWsUrl = haWsUrl.replace(/^http:\/\//i, 'ws://').replace(/^https:\/\//i, 'wss://');
     if (!haWsUrl.endsWith('/api/websocket')) {
       haWsUrl = haWsUrl.replace(/\/+$/, '') + '/api/websocket';
     }
   } else {
-    // Fallback default
     haWsUrl = 'ws://supervisor/core/websocket';
     haToken = supervisorToken || '';
   }
@@ -54,7 +51,7 @@ export function loadConfig() {
 
   const filterDomains = Array.isArray(fileOptions.filter_domains)
     ? fileOptions.filter_domains
-    : ['switch', 'input_boolean'];
+    : ['switch', 'input_boolean', 'sensor'];
 
   const includeEntities = Array.isArray(fileOptions.include_entities)
     ? fileOptions.include_entities

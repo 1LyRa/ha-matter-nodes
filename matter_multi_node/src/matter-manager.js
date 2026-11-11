@@ -1,19 +1,39 @@
 import { ServerNode, Environment } from '@matter/main';
-import { OnOffPlugInUnitDevice } from '@matter/main/devices';
+import { OnOffPlugInUnitDevice, TemperatureSensorDevice, HumiditySensorDevice } from '@matter/main/devices';
+import { PowerSourceServer } from '@matter/main/behaviors/power-source';
 import QRCode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
+
+function convertTemperatureToMatter(value, unit) {
+  if (value === null || value === undefined || isNaN(value)) return null;
+  let celsius = Number(value);
+  if (unit === '°F' || unit === 'F') {
+    celsius = (celsius - 32) * (5 / 9);
+  }
+  return Math.round(celsius * 100);
+}
+
+function convertHumidityToMatter(value) {
+  if (value === null || value === undefined || isNaN(value)) return null;
+  return Math.round(Number(value) * 100);
+}
+
+function convertBatteryToMatter(value) {
+  if (value === null || value === undefined || isNaN(value)) return null;
+  return Math.min(200, Math.max(0, Math.round(Number(value) * 2)));
+}
 
 export class MatterManager {
   constructor(config, haClient) {
     this.config = config;
     this.haClient = haClient;
-    this.nodes = new Map(); // entity_id -> { node, endpoint, info, setFromHA }
-    this.discoveredEntities = new Map(); // entity_id -> { friendlyName, state, rawState }
+    this.nodes = new Map(); // deviceId -> { node, endpoints, info, updateFromHA }
+    this.discoveredDevices = new Map(); // deviceId -> device object
+    this.entityToDeviceId = new Map(); // entityId -> deviceId
     this.enabledEntitiesFile = path.join(this.config.storagePath, 'enabled_entities.json');
-    this.enabledConfig = this.loadEnabledConfig(); // entityId -> { port, discriminator, enabled: true }
+    this.enabledConfig = this.loadEnabledConfig();
 
-    // Configure Matter root storage
     if (this.config.storagePath) {
       if (!fs.existsSync(this.config.storagePath)) {
         fs.mkdirSync(this.config.storagePath, { recursive: true });
@@ -49,16 +69,14 @@ export class MatterManager {
     }
   }
 
-  allocatePortAndDiscriminator(entityId) {
-    // If already assigned in config, preserve it
-    if (this.enabledConfig[entityId]?.port) {
+  allocatePortAndDiscriminator(deviceId) {
+    if (this.enabledConfig[deviceId]?.port) {
       return {
-        port: this.enabledConfig[entityId].port,
-        discriminator: this.enabledConfig[entityId].discriminator,
+        port: this.enabledConfig[deviceId].port,
+        discriminator: this.enabledConfig[deviceId].discriminator,
       };
     }
 
-    // Find all currently used ports and discriminators
     const usedPorts = new Set(Object.values(this.enabledConfig).map((c) => c.port).filter(Boolean));
     const usedDiscs = new Set(Object.values(this.enabledConfig).map((c) => c.discriminator).filter(Boolean));
 
@@ -87,63 +105,154 @@ export class MatterManager {
   }
 
   async syncWithHAStates(statesMap) {
-    console.log('[Matter Manager] Synchronizing discovered entities with Home Assistant...');
+    console.log('[Matter Manager] Synchronizing entities and sensors with Home Assistant...');
+
+    this.entityToDeviceId.clear();
+    this.discoveredDevices.clear();
+
+    const rawSensors = [];
 
     for (const [entityId, stateObj] of statesMap.entries()) {
       if (!this.shouldIncludeEntity(entityId)) {
         continue;
       }
 
-      const friendlyName = stateObj.attributes?.friendly_name || entityId;
-      const isOn = stateObj.state === 'on';
+      const domain = entityId.split('.')[0];
 
-      this.discoveredEntities.set(entityId, {
-        entityId,
-        friendlyName,
-        isOn,
-        rawState: stateObj.state,
-      });
+      // 1. Process Switches & Input Booleans
+      if (domain === 'switch' || domain === 'input_boolean') {
+        const friendlyName = stateObj.attributes?.friendly_name || entityId;
+        const isOn = stateObj.state === 'on';
 
-      // If already running, update state
-      if (this.nodes.has(entityId)) {
-        const entry = this.nodes.get(entityId);
-        await entry.setFromHA(isOn);
+        this.discoveredDevices.set(entityId, {
+          id: entityId,
+          domain,
+          deviceKind: 'switch',
+          friendlyName,
+          isOn,
+          entityId,
+        });
+        this.entityToDeviceId.set(entityId, entityId);
+      }
+
+      // 2. Collect Candidate Sensors (Temperature, Humidity, Battery)
+      if (domain === 'sensor') {
+        const deviceClass = stateObj.attributes?.device_class;
+        const unit = stateObj.attributes?.unit_of_measurement;
+        const isTemp = deviceClass === 'temperature' || /_(temperature|temp)$/i.test(entityId);
+        const isHumid = deviceClass === 'humidity' || /_(humidity|humid)$/i.test(entityId);
+        const isBat = deviceClass === 'battery' || /_(battery|bat)$/i.test(entityId);
+
+        if (isTemp || isHumid || isBat) {
+          rawSensors.push({
+            entityId,
+            stateObj,
+            role: isTemp ? 'temperature' : isHumid ? 'humidity' : 'battery',
+            unit,
+          });
+        }
+      }
+    }
+
+    // Group sensors that belong together (e.g. sensor.living_room_*_temperature, *_humidity, *_battery)
+    const groupedSensors = new Map(); // baseId -> { baseId, friendlyName, temp, humid, bat }
+
+    for (const s of rawSensors) {
+      // Calculate base ID by stripping the role suffix
+      const baseId = s.entityId.replace(/_(temperature|temp|humidity|humid|battery|bat)$/i, '');
+      const rawFriendly = s.stateObj.attributes?.friendly_name || s.entityId;
+      const baseFriendly = rawFriendly.replace(/\s+(Temperature|Humidity|Battery|temp|humid|bat)$/i, '').trim();
+
+      if (!groupedSensors.has(baseId)) {
+        groupedSensors.set(baseId, {
+          baseId,
+          friendlyName: baseFriendly || baseId,
+          temp: null,
+          humid: null,
+          bat: null,
+        });
+      }
+
+      const group = groupedSensors.get(baseId);
+      if (s.role === 'temperature') {
+        group.temp = s;
+      } else if (s.role === 'humidity') {
+        group.humid = s;
+      } else if (s.role === 'battery') {
+        group.bat = s;
+      }
+    }
+
+    // Add grouped sensors to discovered devices
+    for (const [baseId, group] of groupedSensors.entries()) {
+      // Must have at least a temperature or humidity sensor
+      if (!group.temp && !group.humid) continue;
+
+      const deviceObj = {
+        id: baseId,
+        domain: 'sensor',
+        deviceKind: 'sensor',
+        friendlyName: group.friendlyName,
+        tempEntity: group.temp?.entityId || null,
+        humidEntity: group.humid?.entityId || null,
+        batEntity: group.bat?.entityId || null,
+        temperature: group.temp ? parseFloat(group.temp.stateObj.state) : null,
+        humidity: group.humid ? parseFloat(group.humid.stateObj.state) : null,
+        battery: group.bat ? parseFloat(group.bat.stateObj.state) : null,
+        tempUnit: group.temp?.unit || '°C',
+      };
+
+      this.discoveredDevices.set(baseId, deviceObj);
+
+      if (group.temp) this.entityToDeviceId.set(group.temp.entityId, baseId);
+      if (group.humid) this.entityToDeviceId.set(group.humid.entityId, baseId);
+      if (group.bat) this.entityToDeviceId.set(group.bat.entityId, baseId);
+    }
+
+    // Re-sync any already running nodes
+    for (const [deviceId, dev] of this.discoveredDevices.entries()) {
+      if (this.nodes.has(deviceId)) {
+        const entry = this.nodes.get(deviceId);
+        await entry.updateFromHA(dev);
         continue;
       }
 
-      // Check if entity is explicitly enabled
-      const isEnabled = this.enabledConfig[entityId]?.enabled === true;
-      if (isEnabled) {
-        await this.startNodeForEntity(entityId);
+      if (this.enabledConfig[deviceId]?.enabled === true) {
+        await this.startNodeForDevice(deviceId);
       }
     }
 
-    console.log(`[Matter Manager] Discovered ${this.discoveredEntities.size} eligible HA switches (${this.nodes.size} active Matter nodes).`);
+    console.log(`[Matter Manager] Discovered ${this.discoveredDevices.size} devices (${this.nodes.size} actively announced).`);
   }
 
-  async startNodeForEntity(entityId) {
-    if (this.nodes.has(entityId)) {
-      return this.nodes.get(entityId).info;
+  async startNodeForDevice(deviceId) {
+    if (this.nodes.has(deviceId)) {
+      return this.nodes.get(deviceId).info;
     }
 
-    const discovered = this.discoveredEntities.get(entityId);
-    const friendlyName = discovered?.friendlyName || entityId;
-    const initialOn = discovered?.isOn || false;
+    const dev = this.discoveredDevices.get(deviceId);
+    if (!dev) {
+      throw new Error(`Device ${deviceId} not found`);
+    }
 
-    const { port, discriminator } = this.allocatePortAndDiscriminator(entityId);
+    const { port, discriminator } = this.allocatePortAndDiscriminator(deviceId);
 
-    // Save configuration
-    this.enabledConfig[entityId] = {
+    this.enabledConfig[deviceId] = {
       port,
       discriminator,
       enabled: true,
     };
     this.saveEnabledConfig();
 
-    const sanitizedId = entityId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    console.log(`[Matter Manager] Starting standalone Matter node for [${entityId}] on port ${port}, discriminator ${discriminator}...`);
+    const sanitizedId = deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    console.log(`[Matter Manager] Starting Matter node for [${dev.friendlyName}] (${dev.deviceKind}) on port ${port}, discriminator ${discriminator}...`);
 
     try {
+      const primaryDeviceType =
+        dev.deviceKind === 'switch'
+          ? OnOffPlugInUnitDevice.deviceType
+          : TemperatureSensorDevice.deviceType;
+
       const node = await ServerNode.create({
         id: sanitizedId,
         network: {
@@ -155,19 +264,118 @@ export class MatterManager {
           discriminator: discriminator,
         },
         productDescription: {
-          name: friendlyName.slice(0, 32),
-          deviceType: OnOffPlugInUnitDevice.deviceType,
+          name: dev.friendlyName.slice(0, 32),
+          deviceType: primaryDeviceType,
           vendorId: 0xfff1,
           productId: 0x8000 + (port % 1000),
         },
       });
 
-      const endpoint = await node.add(OnOffPlugInUnitDevice, {
-        id: 'switch',
-      });
+      const endpoints = {};
+      let updateFromHA = async () => {};
 
-      if (initialOn) {
-        await endpoint.set({ onOff: { onOff: true } });
+      // Build endpoints depending on deviceKind
+      if (dev.deviceKind === 'switch') {
+        const endpoint = await node.add(OnOffPlugInUnitDevice, { id: 'switch' });
+        endpoints.switch = endpoint;
+
+        if (dev.isOn) {
+          await endpoint.set({ onOff: { onOff: true } });
+        }
+
+        let updatingFromHA = false;
+        endpoint.events.onOff.events.onOff$Changed.on(async (newValue) => {
+          if (updatingFromHA) return;
+          console.log(`[Matter Node: ${dev.friendlyName}] Received command: ${newValue ? 'ON' : 'OFF'}`);
+          dev.isOn = newValue;
+          info.isOn = newValue;
+          await this.haClient.setEntityState(dev.entityId, newValue);
+        });
+
+        updateFromHA = async (newDev) => {
+          if (endpoint.state.onOff.onOff !== newDev.isOn) {
+            updatingFromHA = true;
+            try {
+              await endpoint.set({ onOff: { onOff: newDev.isOn } });
+              info.isOn = newDev.isOn;
+            } finally {
+              updatingFromHA = false;
+            }
+          }
+        };
+      } else if (dev.deviceKind === 'sensor') {
+        // Temperature Endpoint (with Battery PowerSource if battery entity exists)
+        if (dev.tempEntity) {
+          const hasBattery = !!dev.batEntity;
+          const TempClass = hasBattery
+            ? TemperatureSensorDevice.with(PowerSourceServer.with('Battery'))
+            : TemperatureSensorDevice;
+
+          const tempEndpoint = await node.add(TempClass, { id: 'temperature' });
+          endpoints.temp = tempEndpoint;
+
+          const initialTemp = convertTemperatureToMatter(dev.temperature, dev.tempUnit);
+          await tempEndpoint.set({
+            temperatureMeasurement: {
+              measuredValue: initialTemp,
+              minMeasuredValue: -4000,
+              maxMeasuredValue: 10000,
+            },
+          });
+
+          if (hasBattery) {
+            const initialBat = convertBatteryToMatter(dev.battery);
+            await tempEndpoint.set({
+              powerSource: {
+                batPercentRemaining: initialBat,
+                status: 0,
+                order: 0,
+                description: 'Battery',
+              },
+            });
+          }
+        }
+
+        // Humidity Endpoint
+        if (dev.humidEntity) {
+          const humidEndpoint = await node.add(HumiditySensorDevice, { id: 'humidity' });
+          endpoints.humid = humidEndpoint;
+
+          const initialHumid = convertHumidityToMatter(dev.humidity);
+          await humidEndpoint.set({
+            relativeHumidityMeasurement: {
+              measuredValue: initialHumid,
+              minMeasuredValue: 0,
+              maxMeasuredValue: 10000,
+            },
+          });
+        }
+
+        updateFromHA = async (newDev) => {
+          if (endpoints.temp && newDev.temperature !== undefined) {
+            const mTemp = convertTemperatureToMatter(newDev.temperature, newDev.tempUnit);
+            await endpoints.temp.set({
+              temperatureMeasurement: { measuredValue: mTemp },
+            });
+            info.temperature = newDev.temperature;
+          }
+
+          if (endpoints.temp && endpoints.temp.state.powerSource && newDev.battery !== undefined) {
+            const mBat = convertBatteryToMatter(newDev.battery);
+            await endpoints.temp.set({
+              powerSource: { batPercentRemaining: mBat },
+            });
+            info.battery = newDev.battery;
+          }
+
+          if (endpoints.humid && newDev.humidity !== undefined) {
+            const mHumid = convertHumidityToMatter(newDev.humidity);
+            await endpoints.humid.set({
+              relativeHumidityMeasurement: { measuredValue: mHumid },
+            });
+            info.humidity = newDev.humidity;
+          }
+        };
       }
 
       const pairingCodes = node.state.commissioning.pairingCodes || {};
@@ -180,19 +388,18 @@ export class MatterManager {
           qrCodeDataUrl = await QRCode.toDataURL(qrPairingCode, {
             margin: 1,
             width: 240,
-            color: {
-              dark: '#000000',
-              light: '#ffffff',
-            },
+            color: { dark: '#000000', light: '#ffffff' },
           });
         } catch (err) {
-          console.warn(`[Matter Manager] QR generation failed for ${entityId}:`, err.message);
+          console.warn(`[Matter Manager] QR generation failed for ${deviceId}:`, err.message);
         }
       }
 
       const info = {
-        entityId,
-        friendlyName,
+        id: deviceId,
+        entityId: dev.entityId || deviceId,
+        friendlyName: dev.friendlyName,
+        deviceKind: dev.deviceKind,
         port,
         discriminator,
         passcode: this.config.passcode,
@@ -200,102 +407,103 @@ export class MatterManager {
         qrPairingCode,
         qrCodeDataUrl,
         csaQrUrl: qrPairingCode ? `https://project-chip.github.io/connectedhomeip/qrcode.html?data=${encodeURIComponent(qrPairingCode)}` : '',
-        isOn: initialOn,
+        isOn: dev.isOn,
+        temperature: dev.temperature,
+        humidity: dev.humidity,
+        battery: dev.battery,
+        tempUnit: dev.tempUnit,
         isCommissioned: !!node.lifecycle.isCommissioned,
         isAnnounced: true,
       };
-
-      let updatingFromHA = false;
-      endpoint.events.onOff.events.onOff$Changed.on(async (newValue) => {
-        if (updatingFromHA) return;
-        console.log(`[Matter Node: ${friendlyName}] Received Matter command: ${newValue ? 'ON' : 'OFF'}`);
-        info.isOn = newValue;
-        if (discovered) discovered.isOn = newValue;
-        await this.haClient.setEntityState(entityId, newValue);
-      });
 
       await node.start();
 
       node.events.commissioning?.fabrics$Changed?.on?.(() => {
         info.isCommissioned = !!node.lifecycle.isCommissioned;
-        console.log(`[Matter Node: ${friendlyName}] Fabrics updated. Commissioned: ${info.isCommissioned}`);
+        console.log(`[Matter Node: ${dev.friendlyName}] Fabrics updated. Commissioned: ${info.isCommissioned}`);
       });
 
-      this.nodes.set(entityId, {
+      this.nodes.set(deviceId, {
         node,
-        endpoint,
+        endpoints,
         info,
-        setFromHA: async (newVal) => {
-          if (endpoint.state.onOff.onOff !== newVal) {
-            updatingFromHA = true;
-            try {
-              await endpoint.set({ onOff: { onOff: newVal } });
-              info.isOn = newVal;
-              if (discovered) discovered.isOn = newVal;
-            } finally {
-              updatingFromHA = false;
-            }
-          }
-        },
+        updateFromHA,
       });
 
-      console.log(`[Matter Node: ${friendlyName}] Announcing on UDP ${port}! Pairing code: ${manualPairingCode}`);
+      console.log(`[Matter Node: ${dev.friendlyName}] Announcing on UDP ${port}! Pairing code: ${manualPairingCode}`);
       return info;
     } catch (err) {
-      console.error(`[Matter Manager] Failed to start Matter node for ${entityId}:`, err);
+      console.error(`[Matter Manager] Failed to start Matter node for ${deviceId}:`, err);
       throw err;
     }
   }
 
-  async stopNodeForEntity(entityId) {
-    if (this.enabledConfig[entityId]) {
-      this.enabledConfig[entityId].enabled = false;
+  async stopNodeForDevice(deviceId) {
+    if (this.enabledConfig[deviceId]) {
+      this.enabledConfig[deviceId].enabled = false;
       this.saveEnabledConfig();
     }
 
-    const entry = this.nodes.get(entityId);
+    const entry = this.nodes.get(deviceId);
     if (!entry) return;
 
-    console.log(`[Matter Manager] Stopping Matter node for ${entityId}...`);
+    console.log(`[Matter Manager] Stopping Matter node for ${deviceId}...`);
     try {
       await entry.node.close();
     } catch (err) {
-      console.warn(`[Matter Manager] Error while closing node for ${entityId}:`, err.message);
+      console.warn(`[Matter Manager] Error while closing node for ${deviceId}:`, err.message);
     }
-    this.nodes.delete(entityId);
+    this.nodes.delete(deviceId);
   }
 
   async handleHAStateChange(change) {
-    const { entity_id, state } = change;
-    const discovered = this.discoveredEntities.get(entity_id);
-    if (discovered) {
-      discovered.isOn = state;
+    const { entity_id, new_state } = change;
+    const deviceId = this.entityToDeviceId.get(entity_id);
+    if (!deviceId) return;
+
+    const dev = this.discoveredDevices.get(deviceId);
+    if (!dev) return;
+
+    // Update discovered state
+    if (dev.deviceKind === 'switch') {
+      dev.isOn = change.state;
+    } else if (dev.deviceKind === 'sensor') {
+      const numVal = parseFloat(change.raw_state);
+      if (entity_id === dev.tempEntity) {
+        dev.temperature = isNaN(numVal) ? null : numVal;
+      } else if (entity_id === dev.humidEntity) {
+        dev.humidity = isNaN(numVal) ? null : numVal;
+      } else if (entity_id === dev.batEntity) {
+        dev.battery = isNaN(numVal) ? null : numVal;
+      }
     }
 
-    const entry = this.nodes.get(entity_id);
-    if (entry) {
-      await entry.setFromHA(state);
+    // Update live Matter node if active
+    const activeEntry = this.nodes.get(deviceId);
+    if (activeEntry) {
+      await activeEntry.updateFromHA(dev);
     }
   }
 
   getAllEntitiesInfo() {
     const result = [];
 
-    for (const [entityId, discovered] of this.discoveredEntities.entries()) {
-      const activeEntry = this.nodes.get(entityId);
+    for (const [deviceId, dev] of this.discoveredDevices.entries()) {
+      const activeEntry = this.nodes.get(deviceId);
 
       if (activeEntry) {
         result.push({
           ...activeEntry.info,
           isCommissioned: !!activeEntry.node.lifecycle.isCommissioned,
-          isOn: activeEntry.endpoint.state.onOff.onOff,
           isAnnounced: true,
         });
       } else {
-        const savedConfig = this.enabledConfig[entityId];
+        const savedConfig = this.enabledConfig[deviceId];
         result.push({
-          entityId,
-          friendlyName: discovered.friendlyName,
+          id: deviceId,
+          entityId: dev.entityId || deviceId,
+          friendlyName: dev.friendlyName,
+          deviceKind: dev.deviceKind,
           port: savedConfig?.port || null,
           discriminator: savedConfig?.discriminator || null,
           passcode: this.config.passcode,
@@ -303,14 +511,17 @@ export class MatterManager {
           qrPairingCode: null,
           qrCodeDataUrl: null,
           csaQrUrl: null,
-          isOn: discovered.isOn,
+          isOn: dev.isOn,
+          temperature: dev.temperature,
+          humidity: dev.humidity,
+          battery: dev.battery,
+          tempUnit: dev.tempUnit,
           isCommissioned: false,
           isAnnounced: false,
         });
       }
     }
 
-    // Sort: Announced first, then alphabetically by friendlyName
     return result.sort((a, b) => {
       if (a.isAnnounced !== b.isAnnounced) {
         return a.isAnnounced ? -1 : 1;
@@ -319,20 +530,20 @@ export class MatterManager {
     });
   }
 
-  async toggleFromWeb(entityId) {
-    const discovered = this.discoveredEntities.get(entityId);
-    if (!discovered) return false;
-    const newState = !discovered.isOn;
-    return await this.haClient.setEntityState(entityId, newState);
+  async toggleFromWeb(deviceId) {
+    const dev = this.discoveredDevices.get(deviceId);
+    if (!dev || dev.deviceKind !== 'switch') return false;
+    const newState = !dev.isOn;
+    return await this.haClient.setEntityState(dev.entityId, newState);
   }
 
   async close() {
     console.log('[Matter Manager] Closing all active Matter nodes...');
-    for (const [entityId, entry] of this.nodes.entries()) {
+    for (const [deviceId, entry] of this.nodes.entries()) {
       try {
         await entry.node.close();
       } catch (err) {
-        console.warn(`[Matter Manager] Error closing node for ${entityId}:`, err.message);
+        console.warn(`[Matter Manager] Error closing node for ${deviceId}:`, err.message);
       }
     }
     this.nodes.clear();

@@ -29,13 +29,15 @@ applyTheme(currentTheme);
 const haStatusBadge = document.getElementById('haStatusBadge');
 const nodeCountBadge = document.getElementById('nodeCountBadge');
 const countAll = document.getElementById('countAll');
+const countSwitches = document.getElementById('countSwitches');
+const countSensors = document.getElementById('countSensors');
 const countActive = document.getElementById('countActive');
 const countInactive = document.getElementById('countInactive');
 const searchInput = document.getElementById('searchInput');
 const cardsGrid = document.getElementById('cardsGrid');
 const filterTabs = document.querySelectorAll('.tab-btn');
 
-let allEntities = [];
+let allDevices = [];
 let activeTab = 'all';
 
 // Tab Switching
@@ -73,97 +75,121 @@ async function fetchNodes() {
   try {
     const res = await fetch(`${apiBase}/api/nodes`);
     if (!res.ok) return;
-    allEntities = await res.json();
+    allDevices = await res.json();
 
-    const activeCount = allEntities.filter((n) => n.isAnnounced).length;
-    const inactiveCount = allEntities.length - activeCount;
+    const switchCount = allDevices.filter((d) => d.deviceKind === 'switch').length;
+    const sensorCount = allDevices.filter((d) => d.deviceKind === 'sensor').length;
+    const activeCount = allDevices.filter((d) => d.isAnnounced).length;
+    const inactiveCount = allDevices.length - activeCount;
 
-    countAll.textContent = allEntities.length;
+    countAll.textContent = allDevices.length;
+    countSwitches.textContent = switchCount;
+    countSensors.textContent = sensorCount;
     countActive.textContent = activeCount;
     countInactive.textContent = inactiveCount;
 
     renderCards();
   } catch (err) {
-    console.error('Failed to fetch nodes:', err);
+    console.error('Failed to fetch devices:', err);
   }
 }
 
 function renderCards() {
   const query = (searchInput.value || '').trim().toLowerCase();
 
-  const filtered = allEntities.filter((node) => {
-    // Tab filter
-    if (activeTab === 'active' && !node.isAnnounced) return false;
-    if (activeTab === 'inactive' && node.isAnnounced) return false;
+  const filtered = allDevices.filter((dev) => {
+    // Tab filtering
+    if (activeTab === 'switch' && dev.deviceKind !== 'switch') return false;
+    if (activeTab === 'sensor' && dev.deviceKind !== 'sensor') return false;
+    if (activeTab === 'active' && !dev.isAnnounced) return false;
+    if (activeTab === 'inactive' && dev.isAnnounced) return false;
 
     // Search query filter
     return (
-      node.friendlyName.toLowerCase().includes(query) ||
-      node.entityId.toLowerCase().includes(query) ||
-      (node.port && String(node.port).includes(query))
+      dev.friendlyName.toLowerCase().includes(query) ||
+      dev.entityId.toLowerCase().includes(query) ||
+      (dev.port && String(dev.port).includes(query))
     );
   });
 
   if (filtered.length === 0) {
-    if (allEntities.length === 0) {
+    if (allDevices.length === 0) {
       cardsGrid.innerHTML = `
         <div class="empty-state">
-          <p>No switches discovered from Home Assistant yet.</p>
-          <p class="subtitle">Ensure you have entities starting with <code>switch.</code> or <code>input_boolean.</code></p>
+          <p>No devices discovered from Home Assistant yet.</p>
+          <p class="subtitle">Ensure you have entities starting with <code>switch.</code>, <code>input_boolean.</code>, or temperature/humidity sensors.</p>
         </div>`;
     } else {
       cardsGrid.innerHTML = `
         <div class="empty-state">
-          <p>No switches matching "${escapeHtml(query)}" in this tab.</p>
+          <p>No devices matching "${escapeHtml(query)}" in this tab.</p>
         </div>`;
     }
     return;
   }
 
-  cardsGrid.innerHTML = filtered.map((node) => renderCard(node)).join('');
+  cardsGrid.innerHTML = filtered.map((dev) => renderCard(dev)).join('');
 }
 
-function renderCard(node) {
-  if (node.isAnnounced) {
-    return renderAnnouncedCard(node);
-  } else {
-    return renderUnannouncedCard(node);
-  }
-}
-
-function renderAnnouncedCard(node) {
-  const isPaired = node.isCommissioned;
+function renderCard(dev) {
+  const isSwitch = dev.deviceKind === 'switch';
+  const isPaired = dev.isCommissioned;
   const statusPill = isPaired
     ? `<span class="pill paired">✓ Paired to Fabric</span>`
-    : `<span class="pill ready">⏳ Ready to Pair</span>`;
+    : dev.isAnnounced
+    ? `<span class="pill ready">⏳ Ready to Pair</span>`
+    : `<span class="pill idle">Dormant</span>`;
 
-  let formattedCode = node.manualPairingCode || 'N/A';
+  const typePill = isSwitch
+    ? `<span class="pill type-badge">Switch</span>`
+    : `<span class="pill type-badge">Multi-Sensor</span>`;
+
+  let formattedCode = dev.manualPairingCode || 'N/A';
   if (formattedCode.length === 11) {
     formattedCode = `${formattedCode.slice(0, 4)}-${formattedCode.slice(4, 7)}-${formattedCode.slice(7)}`;
   }
 
-  return `
-    <div class="card" data-entity-id="${escapeHtml(node.entityId)}">
-      <div class="card-header">
-        <div>
-          <div class="card-title">${escapeHtml(node.friendlyName)}</div>
-          <div class="card-entity-id">${escapeHtml(node.entityId)}</div>
-        </div>
-        <button class="btn-stop" onclick="disableAnnouncement('${escapeHtml(node.entityId)}', this)" title="Stop announcing this device on Matter">
-          Stop Announcing
-        </button>
+  // Sensor reading block
+  let sensorMetricsHtml = '';
+  if (!isSwitch) {
+    sensorMetricsHtml = `
+      <div class="sensor-readings">
+        ${
+          dev.temperature !== null && dev.temperature !== undefined
+            ? `<div class="sensor-metric">
+                <span class="metric-label">Temperature</span>
+                <span class="metric-value">🌡️ ${dev.temperature}°${dev.tempUnit === '°F' ? 'F' : 'C'}</span>
+              </div>`
+            : ''
+        }
+        ${
+          dev.humidity !== null && dev.humidity !== undefined
+            ? `<div class="sensor-metric">
+                <span class="metric-label">Humidity</span>
+                <span class="metric-value">💧 ${dev.humidity}%</span>
+              </div>`
+            : ''
+        }
+        ${
+          dev.battery !== null && dev.battery !== undefined
+            ? `<div class="sensor-metric">
+                <span class="metric-label">Battery</span>
+                <span class="metric-value">🔋 ${dev.battery}%</span>
+              </div>`
+            : ''
+        }
       </div>
+    `;
+  }
 
-      <div class="pill-container">
-        <span class="pill announced">UDP ${node.port}</span>
-        <span class="pill">Disc: ${node.discriminator}</span>
-        ${statusPill}
-      </div>
-
+  // Body content: Announced vs Unannounced
+  let bodyContent = '';
+  if (dev.isAnnounced) {
+    bodyContent = `
       <div class="qr-box">
         ${
-          node.qrCodeDataUrl
-            ? `<img src="${node.qrCodeDataUrl}" alt="Matter QR Code for ${escapeHtml(node.friendlyName)}">`
+          dev.qrCodeDataUrl
+            ? `<img src="${dev.qrCodeDataUrl}" alt="Matter QR Code for ${escapeHtml(dev.friendlyName)}">`
             : '<div class="spinner"></div>'
         }
       </div>
@@ -173,56 +199,74 @@ function renderAnnouncedCard(node) {
           <span class="code-label">Manual Pairing Code</span>
           <span class="code-value">${formattedCode}</span>
         </div>
-        <button class="btn-copy" onclick="copyToClipboard('${node.manualPairingCode}', this)">Copy</button>
+        <button class="btn-copy" onclick="copyToClipboard('${dev.manualPairingCode}', this)">Copy</button>
       </div>
-
-      <div class="card-footer">
-        <div class="state-indicator">
-          <span class="state-dot ${node.isOn ? 'on' : ''}"></span>
-          <span>HA State: ${node.isOn ? 'ON' : 'OFF'}</span>
-        </div>
-        <div class="footer-actions">
-          <button class="btn-toggle ${node.isOn ? 'active' : ''}" onclick="toggleDevice('${escapeHtml(node.entityId)}')">
-            ${node.isOn ? 'Turn Off' : 'Turn On'}
-          </button>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderUnannouncedCard(node) {
-  return `
-    <div class="card unannounced" data-entity-id="${escapeHtml(node.entityId)}">
-      <div class="card-header">
-        <div>
-          <div class="card-title">${escapeHtml(node.friendlyName)}</div>
-          <div class="card-entity-id">${escapeHtml(node.entityId)}</div>
-        </div>
-      </div>
-
-      <div class="pill-container">
-        <span class="pill idle">Not Announced</span>
-        ${node.port ? `<span class="pill">Assigned: UDP ${node.port}</span>` : ''}
-      </div>
-
+    `;
+  } else {
+    bodyContent = `
       <div class="unannounced-box">
-        <p>This device is currently dormant. Enable it to publish its Matter mDNS advertisement and pairing QR code.</p>
-        <button class="btn-announce" onclick="enableAnnouncement('${escapeHtml(node.entityId)}', this)">
+        <p>This ${isSwitch ? 'switch' : 'sensor'} is dormant. Announce it to allocate a Matter UDP port and pairing QR code.</p>
+        <button class="btn-announce" onclick="enableAnnouncement('${escapeHtml(dev.id)}', this)">
           ⚡ Announce as Matter Device
         </button>
       </div>
+    `;
+  }
+
+  // Footer content
+  let footerContent = '';
+  if (isSwitch) {
+    footerContent = `
+      <div class="state-indicator">
+        <span class="state-dot ${dev.isOn ? 'on' : ''}"></span>
+        <span>HA State: ${dev.isOn ? 'ON' : 'OFF'}</span>
+      </div>
+      <div class="footer-actions">
+        <button class="btn-toggle ${dev.isOn ? 'active' : ''}" onclick="toggleDevice('${escapeHtml(dev.id)}')">
+          ${dev.isOn ? 'Turn Off' : 'Turn On'}
+        </button>
+      </div>
+    `;
+  } else {
+    footerContent = `
+      <div class="state-indicator">
+        <span class="state-dot on"></span>
+        <span>Sensor Active in HA</span>
+      </div>
+      <div class="footer-actions">
+        ${dev.isAnnounced ? `<span class="pill">Matter Live</span>` : ''}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="card ${dev.isAnnounced ? '' : 'unannounced'}" data-device-id="${escapeHtml(dev.id)}">
+      <div class="card-header">
+        <div>
+          <div class="card-title">${escapeHtml(dev.friendlyName)}</div>
+          <div class="card-entity-id">${escapeHtml(dev.entityId)}</div>
+        </div>
+        ${
+          dev.isAnnounced
+            ? `<button class="btn-stop" onclick="disableAnnouncement('${escapeHtml(dev.id)}', this)" title="Stop announcing this device on Matter">
+                Stop Announcing
+              </button>`
+            : ''
+        }
+      </div>
+
+      <div class="pill-container">
+        ${typePill}
+        ${dev.isAnnounced ? `<span class="pill announced">UDP ${dev.port}</span>` : ''}
+        ${dev.isAnnounced ? `<span class="pill">Disc: ${dev.discriminator}</span>` : ''}
+        ${statusPill}
+      </div>
+
+      ${sensorMetricsHtml}
+      ${bodyContent}
 
       <div class="card-footer">
-        <div class="state-indicator">
-          <span class="state-dot ${node.isOn ? 'on' : ''}"></span>
-          <span>HA State: ${node.isOn ? 'ON' : 'OFF'}</span>
-        </div>
-        <div class="footer-actions">
-          <button class="btn-toggle ${node.isOn ? 'active' : ''}" onclick="toggleDevice('${escapeHtml(node.entityId)}')">
-            ${node.isOn ? 'Turn Off' : 'Turn On'}
-          </button>
-        </div>
+        ${footerContent}
       </div>
     </div>
   `;
@@ -249,11 +293,11 @@ window.copyToClipboard = function (text, btn) {
     .catch((err) => console.error('Copy failed:', err));
 };
 
-window.enableAnnouncement = async function (entityId, btn) {
+window.enableAnnouncement = async function (deviceId, btn) {
   btn.disabled = true;
   btn.textContent = 'Starting Matter Node...';
   try {
-    const res = await fetch(`${apiBase}/api/nodes/${encodeURIComponent(entityId)}/enable`, {
+    const res = await fetch(`${apiBase}/api/nodes/${encodeURIComponent(deviceId)}/enable`, {
       method: 'POST',
     });
     if (res.ok) {
@@ -268,14 +312,14 @@ window.enableAnnouncement = async function (entityId, btn) {
   }
 };
 
-window.disableAnnouncement = async function (entityId, btn) {
-  if (!confirm(`Are you sure you want to stop announcing "${entityId}" on Matter?`)) {
+window.disableAnnouncement = async function (deviceId, btn) {
+  if (!confirm(`Are you sure you want to stop announcing "${deviceId}" on Matter?`)) {
     return;
   }
   btn.disabled = true;
   btn.textContent = 'Stopping...';
   try {
-    const res = await fetch(`${apiBase}/api/nodes/${encodeURIComponent(entityId)}/disable`, {
+    const res = await fetch(`${apiBase}/api/nodes/${encodeURIComponent(deviceId)}/disable`, {
       method: 'POST',
     });
     if (res.ok) {
@@ -288,9 +332,9 @@ window.disableAnnouncement = async function (entityId, btn) {
   }
 };
 
-window.toggleDevice = async function (entityId) {
+window.toggleDevice = async function (deviceId) {
   try {
-    const res = await fetch(`${apiBase}/api/nodes/${encodeURIComponent(entityId)}/toggle`, {
+    const res = await fetch(`${apiBase}/api/nodes/${encodeURIComponent(deviceId)}/toggle`, {
       method: 'POST',
     });
     if (res.ok) {

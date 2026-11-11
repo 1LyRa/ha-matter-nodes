@@ -9,17 +9,15 @@ export function createWebServer(config, matterManager, haClient) {
   const app = express();
   app.use(express.json());
 
-  // Serve static files
   const publicDir = path.join(__dirname, 'public');
   app.use(express.static(publicDir));
 
-  // Status & Nodes endpoint
   app.get('/api/status', (req, res) => {
     res.json({
       haConnected: haClient.isConnected,
       startPort: config.startPort,
       activeCount: matterManager.nodes.size,
-      totalDiscovered: matterManager.discoveredEntities.size,
+      totalDiscovered: matterManager.discoveredDevices.size,
       storagePath: config.storagePath,
     });
   });
@@ -28,32 +26,29 @@ export function createWebServer(config, matterManager, haClient) {
     res.json(matterManager.getAllEntitiesInfo());
   });
 
-  // Enable/start announcing a device
-  app.post('/api/nodes/:entityId/enable', async (req, res) => {
-    const { entityId } = req.params;
+  app.post('/api/nodes/:deviceId/enable', async (req, res) => {
+    const { deviceId } = req.params;
     try {
-      const info = await matterManager.startNodeForEntity(entityId);
+      const info = await matterManager.startNodeForDevice(deviceId);
       res.json({ ok: true, info });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // Disable/stop announcing a device
-  app.post('/api/nodes/:entityId/disable', async (req, res) => {
-    const { entityId } = req.params;
+  app.post('/api/nodes/:deviceId/disable', async (req, res) => {
+    const { deviceId } = req.params;
     try {
-      await matterManager.stopNodeForEntity(entityId);
+      await matterManager.stopNodeForDevice(deviceId);
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // Toggle switch endpoint in HA
-  app.post('/api/nodes/:entityId/toggle', async (req, res) => {
-    const { entityId } = req.params;
-    const success = await matterManager.toggleFromWeb(entityId);
+  app.post('/api/nodes/:deviceId/toggle', async (req, res) => {
+    const { deviceId } = req.params;
+    const success = await matterManager.toggleFromWeb(deviceId);
     if (success) {
       res.json({ ok: true });
     } else {
@@ -61,7 +56,6 @@ export function createWebServer(config, matterManager, haClient) {
     }
   });
 
-  // Fallback to index.html for SPA/Ingress
   app.use((req, res) => {
     res.sendFile(path.join(publicDir, 'index.html'));
   });
