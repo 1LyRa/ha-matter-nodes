@@ -351,6 +351,9 @@ function computeCardsRenderKey(filtered, query) {
       aq: d.airQuality,
       hepa: d.hepaFilter,
       carb: d.carbonFilter,
+      avail: d.isAvailable !== false,
+      isOnline: !!d.isOnline,
+      raw: d.rawState,
       isMultiLight: !!d.isMultiLight,
       channels: d.channels ? d.channels.map((c) => ({ id: c.id, isOn: c.isOn, bri: c.brightness })) : [],
     })),
@@ -410,11 +413,13 @@ function renderCard(dev) {
   const isFan = dev.deviceKind === 'fan';
   const isSensor = dev.deviceKind === 'sensor';
   const isPaired = dev.isCommissioned;
-  const statusPill = isPaired
+  const isAvailable = dev.isAvailable !== false;
+  const offlinePill = !isAvailable ? `<span class="pill offline">⚠️ Offline in HA</span>` : '';
+  const statusPill = (isPaired
     ? `<span class="pill paired">✓ Paired to Fabric</span>`
     : dev.isAnnounced
     ? `<span class="pill ready">⏳ Ready to Pair</span>`
-    : `<span class="pill idle">Dormant</span>`;
+    : `<span class="pill idle">Dormant</span>`) + (offlinePill ? ` ${offlinePill}` : '');
 
   let typePill = '<span class="pill type-badge">Device</span>';
   if (dev.isSubEntity) {
@@ -711,15 +716,15 @@ function renderCard(dev) {
   // Footer content
   let footerContent = '';
   if (isClimate) {
-    const isRunning = dev.hvacMode && dev.hvacMode !== 'off';
+    const isRunning = dev.hvacMode && dev.hvacMode !== 'off' && isAvailable;
     footerContent = `
       <div class="state-indicator">
-        <span class="state-dot ${isRunning ? 'on' : ''}"></span>
-        <span>HA Mode: ${(dev.hvacMode || 'off').toUpperCase()}</span>
+        <span class="state-dot ${!isAvailable ? 'offline' : (isRunning ? 'on' : '')}"></span>
+        <span>HA Mode: ${!isAvailable ? 'UNAVAILABLE' : (dev.hvacMode || 'off').toUpperCase()}</span>
       </div>
       <div class="footer-actions">
-        <button class="btn-toggle ${isRunning ? 'active' : ''}" onclick="toggleDevice('${escapeHtml(dev.id)}')">
-          ${isRunning ? 'Turn Off' : 'Turn On'}
+        <button class="btn-toggle ${!isAvailable ? 'disabled' : (isRunning ? 'active' : '')}" ${!isAvailable ? 'disabled title="Device is offline in Home Assistant"' : `onclick="toggleDevice('${escapeHtml(dev.id)}')"`}>
+          ${!isAvailable ? 'Offline' : (isRunning ? 'Turn Off' : 'Turn On')}
         </button>
       </div>
     `;
@@ -731,11 +736,11 @@ function renderCard(dev) {
             (ch) => `
           <div class="channel-row">
             <div class="channel-info">
-              <span class="state-dot ${ch.isOn ? 'on' : ''}"></span>
+              <span class="state-dot ${!isAvailable ? 'offline' : (ch.isOn ? 'on' : '')}"></span>
               <span class="channel-name">${escapeHtml(ch.friendlyName || ch.id)}</span>
             </div>
-            <button class="btn-toggle channel-btn ${ch.isOn ? 'active' : ''}" onclick="toggleDeviceChannel('${escapeHtml(dev.id)}', '${escapeHtml(ch.entityId)}')">
-              ${ch.isOn ? 'Turn Off' : 'Turn On'}
+            <button class="btn-toggle channel-btn ${!isAvailable ? 'disabled' : (ch.isOn ? 'active' : '')}" ${!isAvailable ? 'disabled' : `onclick="toggleDeviceChannel('${escapeHtml(dev.id)}', '${escapeHtml(ch.entityId)}')"`}>
+              ${!isAvailable ? 'Offline' : (ch.isOn ? 'Turn Off' : 'Turn On')}
             </button>
           </div>
         `
@@ -746,20 +751,20 @@ function renderCard(dev) {
   } else if (isSwitch || isLight || isPump || isPurifier || isFan) {
     footerContent = `
       <div class="state-indicator">
-        <span class="state-dot ${dev.isOn ? 'on' : ''}"></span>
-        <span>HA State: ${dev.isOn ? 'ON' : 'OFF'}</span>
+        <span class="state-dot ${!isAvailable ? 'offline' : (dev.isOn ? 'on' : '')}"></span>
+        <span>HA State: ${!isAvailable ? 'UNAVAILABLE' : (dev.isOn ? 'ON' : 'OFF')}</span>
       </div>
       <div class="footer-actions">
-        <button class="btn-toggle ${dev.isOn ? 'active' : ''}" onclick="toggleDevice('${escapeHtml(dev.id)}')">
-          ${dev.isOn ? 'Turn Off' : 'Turn On'}
+        <button class="btn-toggle ${!isAvailable ? 'disabled' : (dev.isOn ? 'active' : '')}" ${!isAvailable ? 'disabled title="Device is offline in Home Assistant"' : `onclick="toggleDevice('${escapeHtml(dev.id)}')"`}>
+          ${!isAvailable ? 'Offline' : (dev.isOn ? 'Turn Off' : 'Turn On')}
         </button>
       </div>
     `;
   } else {
     footerContent = `
       <div class="state-indicator">
-        <span class="state-dot on"></span>
-        <span>Sensor Active in HA</span>
+        <span class="state-dot ${!isAvailable ? 'offline' : 'on'}"></span>
+        <span>${!isAvailable ? 'Sensor Offline in HA' : 'Sensor Active in HA'}</span>
       </div>
       <div class="footer-actions">
         ${dev.isAnnounced ? `<span class="pill">Matter Live</span>` : ''}

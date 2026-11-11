@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.3
+
+- **Reflect Home Assistant Entity Offline/Unavailable State in Matter**:
+  - Automatically tracks Home Assistant entity availability (`unavailable`, `unknown`).
+  - When a commissioned device (e.g. `switch.boiler_new`) goes offline in Home Assistant, the Matter node gracefully stops its operational network listener (`node.stop()`). Google Home and other Matter controllers immediately detect that the device is unreachable and display it as **"Offline"** / **"Not Responding"**.
+  - When the entity recovers and comes back online in Home Assistant (`on`, `off`, numeric state), the Matter node automatically resumes network listening (`node.start()`), restoring live control in Google Home without requiring re-pairing or re-commissioning.
+  - If a commissioned node is restored from storage at addon boot while the underlying HA entity is offline, it is immediately taken offline to accurately reflect physical availability to controllers.
+- **Web Dashboard Offline Indicators & Guard**:
+  - Added visual `⚠️ Offline in HA` pills and red status dots (`HA State: UNAVAILABLE`) across device cards in the dashboard.
+  - Disabled manual toggle buttons on offline devices to prevent sending void commands into Home Assistant.
+  - Guarded `/api/nodes/:deviceId/toggle` against executing service calls on offline entities.
+
 ## 1.7.2
 
 - **Fix `resetNodeForDevice` Method Resolution**: Resolved a runtime crash (`TypeError: this.getNextAvailablePort is not a function`) when resetting uninitialized nodes by correctly routing port and discriminator allocation through `allocatePortAndDiscriminator`.

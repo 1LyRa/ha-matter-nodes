@@ -819,6 +819,9 @@ export class MatterManager {
       const carbonVal = carbonEntity ? parseFilterLife(statesMap.get(carbonEntity)) : null;
       const tempUnit = (tempEntity && statesMap.get(tempEntity)?.attributes?.unit_of_measurement) || '°C';
 
+      const primaryState = statesMap.get(primaryId)?.state;
+      const isAvailable = primaryState !== 'unavailable' && primaryState !== 'unknown';
+
       this.discoveredDevices.set(primaryId, {
         id: primaryId,
         domain: 'fan',
@@ -840,6 +843,8 @@ export class MatterManager {
         hepaEntity,
         carbonEntity,
         isOn,
+        isAvailable,
+        rawState: primaryState || (isOn ? 'on' : 'off'),
         percentage,
         presetModes,
         fanMode,
@@ -884,6 +889,7 @@ export class MatterManager {
         const regDeviceName = reg?.device_id ? this.haClient?.deviceRegistry?.get(reg.device_id)?.name : null;
         const friendlyName = cleanDeviceFriendlyName(rawFriendly, regDeviceName);
         const isOn = stateObj.state === 'on';
+        const isAvailable = stateObj.state !== 'unavailable' && stateObj.state !== 'unknown';
         const isPump = isFountainOrPump(entityId, stateObj);
         const isAnnounced = this.enabledConfig[entityId]?.enabled === true || this.nodes.has(entityId);
 
@@ -901,6 +907,8 @@ export class MatterManager {
             deviceKind: isPump ? 'pump' : 'switch',
             friendlyName,
             isOn,
+            isAvailable,
+            rawState: stateObj.state,
             entityId,
             isSubEntity: isSub,
           });
@@ -1010,12 +1018,16 @@ export class MatterManager {
         const hvacAction = stateObj.attributes?.hvac_action || null;
         const isOn = hvacMode !== 'off';
 
+        const isAvailable = stateObj.state !== 'unavailable' && stateObj.state !== 'unknown';
+
         this.discoveredDevices.set(entityId, {
           id: entityId,
           domain,
           deviceKind: 'climate',
           friendlyName,
           isOn,
+          isAvailable,
+          rawState: stateObj.state,
           hvacMode,
           hvacAction,
           supportedModes,
@@ -1062,6 +1074,8 @@ export class MatterManager {
         const isSub = isChildOrAuxiliaryEntity(entityId, stateObj, reg, statesMap, this.haClient);
         const isAnnounced = this.enabledConfig[entityId]?.enabled === true || this.nodes.has(entityId);
 
+        const isAvailable = stateObj.state !== 'unavailable' && stateObj.state !== 'unknown';
+
         if (!isSub || this.showAllSensors || isAnnounced) {
           this.discoveredDevices.set(entityId, {
             id: entityId,
@@ -1069,6 +1083,8 @@ export class MatterManager {
             deviceKind: 'fan',
             friendlyName,
             isOn,
+            isAvailable,
+            rawState: stateObj.state,
             percentage,
             fanMode,
             presetModes,
@@ -1183,10 +1199,14 @@ export class MatterManager {
         lightType = 'dimmable';
       }
 
+      const isAvailable = stateObj.state !== 'unavailable' && stateObj.state !== 'unknown';
+
       return {
         entityId,
         friendlyName,
         isOn,
+        isAvailable,
+        rawState: stateObj.state,
         brightness,
         colorTemp,
         xyColor,
@@ -1209,6 +1229,8 @@ export class MatterManager {
           lightType: ch.lightType,
           friendlyName: ch.friendlyName,
           isOn: ch.isOn,
+          isAvailable: ch.isAvailable,
+          rawState: ch.rawState,
           brightness: ch.brightness,
           colorTemp: ch.colorTemp,
           xyColor: ch.xyColor,
@@ -1225,6 +1247,7 @@ export class MatterManager {
         // Multi-channel light device
         const channels = grp.channels.map(buildLightChannel);
         const overallOn = channels.some((c) => c.isOn);
+        const overallAvailable = channels.some((c) => c.isAvailable);
         const deviceId = baseId;
         this.discoveredDevices.set(deviceId, {
           id: deviceId,
@@ -1233,6 +1256,8 @@ export class MatterManager {
           lightType: channels[0].lightType,
           friendlyName: grp.friendlyName,
           isOn: overallOn,
+          isAvailable: overallAvailable,
+          rawState: overallAvailable ? 'on' : 'unavailable',
           brightness: channels[0].brightness,
           colorTemp: channels[0].colorTemp,
           xyColor: channels[0].xyColor,
@@ -1324,6 +1349,7 @@ export class MatterManager {
       );
 
       const representativeEntityId = group.temp?.entityId || group.humid?.entityId || group.occ?.entityId || group.bat?.entityId || group.allEntities[0] || baseId;
+      const isAvailable = group.allEntities.some((id) => statesMap.get(id)?.state !== 'unavailable' && statesMap.get(id)?.state !== 'unknown');
 
       const deviceObj = {
         id: baseId,
@@ -1331,6 +1357,8 @@ export class MatterManager {
         domain: 'sensor',
         deviceKind: 'sensor',
         friendlyName: group.friendlyName,
+        isAvailable,
+        rawState: isAvailable ? 'available' : 'unavailable',
         tempEntity: group.temp?.entityId || null,
         humidEntity: group.humid?.entityId || null,
         batEntity: group.bat?.entityId || null,
@@ -1472,7 +1500,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.7.2',
+          softwareVersionString: '1.7.3',
         },
       });
 
@@ -1483,7 +1511,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.7.2',
+            softwareVersionString: '1.7.3',
           },
         });
       } catch (err) {
@@ -2693,6 +2721,8 @@ export class MatterManager {
         tempUnit: dev.tempUnit,
         isCommissioned: !!node.lifecycle.isCommissioned,
         isAnnounced: true,
+        isAvailable: dev.isAvailable !== false,
+        rawState: dev.rawState || (dev.isOn ? 'on' : 'off'),
       };
 
       await node.start();
@@ -2700,7 +2730,21 @@ export class MatterManager {
       node.events.commissioning?.fabrics$Changed?.on?.(() => {
         info.isCommissioned = !!node.lifecycle.isCommissioned;
         console.log(`[Matter Node: ${dev.friendlyName}] Fabrics updated. Commissioned: ${info.isCommissioned}`);
+        if (info.isCommissioned && dev.isAvailable === false && node.lifecycle.isOnline) {
+          console.log(`[Matter Node: ${dev.friendlyName}] Commissioned node entity is offline in HA (${dev.rawState}). Taking Matter node offline...`);
+          node.stop().catch((err) => console.warn(`[Matter Node: ${dev.friendlyName}] Error taking node offline:`, err.message));
+        }
       });
+
+      // If already commissioned from persistent storage and underlying HA entity is offline, take node offline immediately
+      if (node.lifecycle.isCommissioned && dev.isAvailable === false && node.lifecycle.isOnline) {
+        console.log(`[Matter Node: ${dev.friendlyName}] Restored commissioned node is offline in HA (${dev.rawState}). Taking Matter node offline...`);
+        try {
+          await node.stop();
+        } catch (err) {
+          console.warn(`[Matter Node: ${dev.friendlyName}] Error taking offline:`, err.message);
+        }
+      }
 
       this.nodes.set(deviceId, {
         node,
@@ -2829,6 +2873,37 @@ export class MatterManager {
       }
     }
 
+    // Track entity availability from HA state
+    const rawState = change.raw_state;
+    const isAvailable = rawState !== 'unavailable' && rawState !== 'unknown';
+    dev.isAvailable = isAvailable;
+    dev.rawState = rawState;
+
+    if (activeEntry) {
+      activeEntry.info.isAvailable = isAvailable;
+      activeEntry.info.rawState = rawState;
+
+      // For commissioned nodes, reflect HA offline state by taking node offline/online in Matter
+      const isNodeCommissioned = Boolean(activeEntry.node.lifecycle.isCommissioned || activeEntry.info?.isCommissioned);
+      if (isNodeCommissioned) {
+        if (!isAvailable && activeEntry.node.lifecycle.isOnline) {
+          console.log(`[Matter Node: ${dev.friendlyName}] Entity became offline in HA (${rawState}). Taking Matter node offline...`);
+          try {
+            await activeEntry.node.stop();
+          } catch (err) {
+            console.warn(`[Matter Node: ${dev.friendlyName}] Error taking node offline:`, err.message);
+          }
+        } else if (isAvailable && !activeEntry.node.lifecycle.isOnline) {
+          console.log(`[Matter Node: ${dev.friendlyName}] Entity is back online in HA (${rawState}). Bringing Matter node online...`);
+          try {
+            await activeEntry.node.start();
+          } catch (err) {
+            console.warn(`[Matter Node: ${dev.friendlyName}] Error bringing node online:`, err.message);
+          }
+        }
+      }
+    }
+
     // Update discovered state
     if (dev.deviceKind === 'switch') {
       dev.isOn = change.state;
@@ -2951,8 +3026,8 @@ export class MatterManager {
       }
     }
 
-    // Update live Matter node if active
-    if (activeEntry) {
+    // Update live Matter node if active and online
+    if (activeEntry && isAvailable) {
       await activeEntry.updateFromHA(dev);
     }
   }
@@ -2978,6 +3053,9 @@ export class MatterManager {
           hepaFilter: activeEntry.info.hepaFilter ?? dev.hepaFilter ?? null,
           carbonFilter: activeEntry.info.carbonFilter ?? dev.carbonFilter ?? null,
           isCommissioned: !!activeEntry.node.lifecycle.isCommissioned,
+          isOnline: !!activeEntry.node.lifecycle.isOnline,
+          isAvailable: activeEntry.info.isAvailable ?? (dev.isAvailable !== false),
+          rawState: activeEntry.info.rawState || dev.rawState || (dev.isOn ? 'on' : 'off'),
           isAnnounced: true,
         });
       } else {
@@ -3016,6 +3094,8 @@ export class MatterManager {
           qrCodeDataUrl: null,
           csaQrUrl: null,
           isOn: dev.isOn,
+          isAvailable: dev.isAvailable !== false,
+          rawState: dev.rawState || (dev.isOn ? 'on' : 'off'),
           brightness: dev.brightness,
           colorTemp: dev.colorTemp,
           xyColor: dev.xyColor,
@@ -3040,6 +3120,11 @@ export class MatterManager {
   async toggleFromWeb(deviceId, targetEntityId) {
     const dev = this.discoveredDevices.get(deviceId);
     if (!dev) return false;
+
+    if (dev.isAvailable === false) {
+      console.warn(`[Matter Manager] Cannot toggle ${dev.friendlyName}: device is offline in Home Assistant (${dev.rawState})`);
+      return false;
+    }
 
     if (targetEntityId) {
       const stateObj = this.lastStates?.get(targetEntityId);
