@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Matter Multi-Node | Home Assistant</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo-icon">⚡</div>
+        <div>
+          <h1>Matter Multi-Node</h1>
+          <p class="subtitle">Standalone Matter switches for Google Home (Bypasses Matter Bridge)</p>
+        </div>
+      </div>
+      <div class="header-right">
+        <div id="haStatusBadge" class="status-badge connecting">Connecting to HA...</div>
+        <div id="nodeCountBadge" class="status-badge count">0 Nodes</div>
+      </div>
+    </header>
+
+    <div class="instructions-card">
+      <div class="instruction-header">
+        <span class="info-icon">ℹ️</span>
+        <h3>How to Pair with Google Home</h3>
+      </div>
+      <ol class="instruction-steps">
+        <li>Open the <strong>Google Home</strong> app on your phone.</li>
+        <li>Tap <strong>Devices</strong> &gt; <strong>+ (Add)</strong> &gt; <strong>Matter-enabled device</strong>.</li>
+        <li>Scan the <strong>QR Code</strong> of the switch below directly from your screen, or choose <em>"Set up without code"</em> and enter the <strong>Manual Pairing Code</strong>.</li>
+        <li>Repeat for any switch you need in Google Home. Once paired, Google Home controls it directly over local Matter!</li>
+      </ol>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" id="searchInput" placeholder="Filter switches by name or entity ID..." class="search-input">
+      <div class="toolbar-info">
+        <span>Starting UDP Port: <strong id="startPortLabel">5541</strong></span>
+      </div>
+    </div>
+
+    <main id="cardsGrid" class="cards-grid">
+      <div class="loading-state">
+        <div class="spinner"></div>
+        <p>Discovering Home Assistant switches and generating Matter nodes...</p>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

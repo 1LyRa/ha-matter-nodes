@@ -1,0 +1,16 @@
+{
+  "name": "ha-matter-nodes",
+  "version": "1.0.0",
+  "description": "Expose Home Assistant entities as individual standalone Matter nodes (non-bridge)",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@matter/main": "^0.18.0",
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0"
+  }
+}
