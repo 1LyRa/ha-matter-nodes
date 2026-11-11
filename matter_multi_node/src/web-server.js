@@ -16,6 +16,7 @@ export function createWebServer(config, matterManager, haClient) {
   app.get('/api/status', (req, res) => {
     res.json({
       haConnected: haClient.isConnected,
+      haVersion: haClient.haVersion || null,
       startPort: config.startPort,
       activeCount: matterManager.nodes.size,
       totalDiscovered: matterManager.discoveredDevices.size,

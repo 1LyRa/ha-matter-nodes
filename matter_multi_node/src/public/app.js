@@ -258,7 +258,7 @@ async function fetchStatus() {
     const data = await res.json();
 
     if (data.haConnected) {
-      haStatusBadge.textContent = 'Connected to Home Assistant';
+      haStatusBadge.textContent = data.haVersion ? `Connected to Home Assistant v${data.haVersion}` : 'Connected to Home Assistant';
       haStatusBadge.className = 'status-badge connected';
     } else {
       haStatusBadge.textContent = 'Connecting to HA...';

@@ -11,6 +11,7 @@ export class HAClient extends EventEmitter {
     this.pendingRequests = new Map();
     this.reconnectTimer = null;
     this.isConnected = false;
+    this.haVersion = null;
     this.states = new Map(); // entity_id -> state object
     this.entityRegistry = new Map(); // entity_id -> entity registry entry
     this.deviceRegistry = new Map(); // device_id -> device registry entry
@@ -99,6 +100,7 @@ export class HAClient extends EventEmitter {
 
     if (msg.type === 'auth_ok') {
       console.log(`[HA Client] Authenticated successfully with HA v${msg.ha_version}!`);
+      this.haVersion = msg.ha_version || null;
       this.isConnected = true;
       this.emit('connected');
       this.initSubscriptions();
@@ -247,5 +249,9 @@ export class HAClient extends EventEmitter {
 
   getState(entityId) {
     return this.states.get(entityId);
+  }
+
+  getHaVersion() {
+    return this.haVersion;
   }
 }
