@@ -82,7 +82,8 @@ export function createWebServer(config, matterManager, haClient) {
 
   app.post('/api/nodes/:deviceId/toggle', async (req, res) => {
     const { deviceId } = req.params;
-    const success = await matterManager.toggleFromWeb(deviceId);
+    const entityId = req.body?.entityId || req.query?.entityId;
+    const success = await matterManager.toggleFromWeb(deviceId, entityId);
     if (success) {
       res.json({ ok: true });
     } else {

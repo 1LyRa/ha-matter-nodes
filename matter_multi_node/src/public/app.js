@@ -345,6 +345,8 @@ function computeCardsRenderKey(filtered, query) {
       temp: d.temperature,
       hum: d.humidity,
       bat: d.battery,
+      isMultiLight: !!d.isMultiLight,
+      channels: d.channels ? d.channels.map((c) => ({ id: c.id, isOn: c.isOn, bri: c.brightness })) : [],
     })),
   });
 }
@@ -414,7 +416,9 @@ function renderCard(dev) {
   } else if (isSwitch) {
     typePill = '<span class="pill type-badge">Switch</span>';
   } else if (isLight) {
-    if (dev.lightType === 'extended_color') {
+    if (dev.isMultiLight) {
+      typePill = '<span class="pill type-badge">Multi-Channel Light</span>';
+    } else if (dev.lightType === 'extended_color') {
       typePill = '<span class="pill type-badge">Color Light</span>';
     } else if (dev.lightType === 'color_temp') {
       typePill = '<span class="pill type-badge">White Spectrum Light</span>';
@@ -599,6 +603,26 @@ function renderCard(dev) {
         <button class="btn-toggle ${isRunning ? 'active' : ''}" onclick="toggleDevice('${escapeHtml(dev.id)}')">
           ${isRunning ? 'Turn Off' : 'Turn On'}
         </button>
+      </div>
+    `;
+  } else if (isLight && dev.isMultiLight && Array.isArray(dev.channels) && dev.channels.length > 0) {
+    footerContent = `
+      <div class="multi-channel-container">
+        ${dev.channels
+          .map(
+            (ch) => `
+          <div class="channel-row">
+            <div class="channel-info">
+              <span class="state-dot ${ch.isOn ? 'on' : ''}"></span>
+              <span class="channel-name">${escapeHtml(ch.friendlyName || ch.id)}</span>
+            </div>
+            <button class="btn-toggle channel-btn ${ch.isOn ? 'active' : ''}" onclick="toggleDeviceChannel('${escapeHtml(dev.id)}', '${escapeHtml(ch.entityId)}')">
+              ${ch.isOn ? 'Turn Off' : 'Turn On'}
+            </button>
+          </div>
+        `
+          )
+          .join('')}
       </div>
     `;
   } else if (isSwitch || isLight || isPump) {
@@ -821,6 +845,21 @@ window.toggleDevice = async function (deviceId) {
     }
   } catch (err) {
     console.error('Toggle failed:', err);
+  }
+};
+
+window.toggleDeviceChannel = async function (deviceId, entityId) {
+  try {
+    const res = await fetch(`${apiBase}/api/nodes/${encodeURIComponent(deviceId)}/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entityId }),
+    });
+    if (res.ok) {
+      setTimeout(fetchNodes, 300);
+    }
+  } catch (err) {
+    console.error('Toggle channel failed:', err);
   }
 };
 

@@ -211,16 +211,41 @@ function getSensorBaseId(entityId) {
   });
 }
 
-function extractSensorBaseFriendly(rawFriendly) {
+function cleanDeviceFriendlyName(name, deviceName) {
+  if (deviceName && deviceName.trim()) return deviceName.trim();
+  if (!name) return '';
+  let str = name.trim();
+  // Strip trailing raw power / raw_power
+  str = str.replace(/\s*[-–—:]?\s*\braw\s*power\b/gi, '').trim();
+  // If words are duplicated e.g. 'Air conditioner Air conditioner' or 'Bedroom fountain Bedroom fountain'
+  const words = str.split(/\s+/);
+  if (words.length >= 2 && words.length % 2 === 0) {
+    const firstHalf = words.slice(0, words.length / 2).join(' ');
+    const secondHalf = words.slice(words.length / 2).join(' ');
+    if (firstHalf.toLowerCase() === secondHalf.toLowerCase()) {
+      str = firstHalf;
+    }
+  }
+  str = str.replace(/^(.+?)\s+\1\b/i, '$1');
+  return str.trim();
+}
+
+function extractSensorBaseFriendly(rawFriendly, deviceName) {
+  if (deviceName && deviceName.trim()) return cleanDeviceFriendlyName(deviceName);
   if (!rawFriendly) return '';
-  return rawFriendly
-    .trim()
+  const cleaned = cleanDeviceFriendlyName(rawFriendly);
+  return cleaned
     .replace(/\s*[-–—:]?\s*(?:Temperature|Humidity|Battery|Battery Level|Battery Voltage|Battery Type|Illuminance|Occupancy|Motion|Presence|Power|Energy|Voltage|Current|temp|humid|bat)(?:\s+\d+)?$/i, '')
     .trim();
 }
 
 function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, haClient) {
   if (!entityId) return false;
+
+  // Fountains and pumps are primary devices, never hide them as child entities
+  if (isFountainOrPump(entityId, stateObj)) {
+    return false;
+  }
 
   const domain = entityId.split('.')[0];
   const baseName = entityId.split('.')[1] || '';
@@ -236,8 +261,8 @@ function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, ha
   // 2. Child entity patterns in entity_id
   const childPatterns = [
     /(?:^|_)child_?lock(?:_\d+)?$/i,
-    /(?:^|_)(?:audible_|visual_)?alarm(?:_enabled)?(?:_\d+)?$/i,
-    /(?:^|_)(?:buzzer|beeper|siren)(?:_enabled)?(?:_\d+)?$/i,
+    /(?:^|_)(?:audible_|visual_)?alarm(?:_enabled|_sound|_volume|_timeout|_mode)?(?:_\d+)?$/i,
+    /(?:^|_)(?:buzzer|beeper|siren|chime)(?:_enabled|_volume|_sound)?(?:_\d+)?$/i,
     /(?:^|_)raw_?power(?:_\d+)?$/i,
     /(?:^|_)(?:indicator(?:_light)?|status_led|backlight|night_light|display_light)(?:_\d+)?$/i,
     /(?:^|_)led(?:_\d+)?$/i,
@@ -246,6 +271,12 @@ function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, ha
     /(?:^|_)(?:tamper|pairing_mode|self_test|test_mode)(?:_\d+)?$/i,
     /(?:^|_)(?:sensitivity|hold_time|detection_distance|radar_sensitivity|motion_sensitivity)(?:_\d+)?$/i,
     /(?:^|_)(?:firmware|identify)(?:_\d+)?$/i,
+    // Vacuum auxiliary controls and schedules
+    /(?:^|_)(?:pad_dry|dry_pad|mop_pad|clean_pad|empty_dustbin|self_empty|dock_wash|auto_empty)(?:_\d+)?$/i,
+    /(?:^|_)schedule(?:_\d+)?/i,
+    // Automation helper flags
+    /(?:^|_)owned(?:_\d+)?$/i,
+    /(?:^|_)roomba_.*_owned/i,
   ];
 
   if (childPatterns.some((pattern) => pattern.test(lowerId))) {
@@ -255,16 +286,13 @@ function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, ha
   // Child patterns in friendly_name
   const childFriendlyPatterns = [
     /\bchild\s*lock\b/i,
-    /\baudible\s*alarm\b/i,
-    /\bvisual\s*alarm\b/i,
-    /\balarm\s*enabled\b/i,
+    /\b(?:audible|visual)?\s*alarm\s*(?:enabled|sound|volume|timeout|melody)?\b/i,
+    /\b(?:buzzer|beeper|siren|chime)\b/i,
     /\braw\s*power\b/i,
     /\bindicator(?:\s+light)?\b/i,
     /\bstatus\s*led\b/i,
     /\bbacklight\b/i,
     /\bnight\s*light\b/i,
-    /\bbuzzer\b/i,
-    /\bbeeper\b/i,
     /\bauto[- ]off\b/i,
     /\bauto[- ]close\b/i,
     /\bpower[- ]on state\b/i,
@@ -274,6 +302,10 @@ function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, ha
     /\bidentify\b/i,
     /\bsensitivity\b/i,
     /\bhold time\b/i,
+    /\bdry pad\b/i,
+    /\bpad dry\b/i,
+    /\bschedule\b/i,
+    /\bowned\b/i,
   ];
 
   if (childFriendlyPatterns.some((pattern) => pattern.test(friendlyName))) {
@@ -309,6 +341,9 @@ function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, ha
         deviceEntities.push(eId);
       }
     }
+    if ((domain === 'switch' || domain === 'input_boolean') && deviceEntities.some((id) => id.startsWith('vacuum.'))) {
+      return true;
+    }
     if (domain === 'switch' && deviceEntities.some((id) => id.startsWith('climate.'))) {
       return true;
     }
@@ -321,6 +356,11 @@ function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, ha
         return true;
       }
     }
+  }
+
+  // 6. Mobile app / phone tracking switches and helpers
+  if (regEntry?.platform === 'mobile_app' || /^(?:switch|input_boolean)\.(?:pixel|iphone|sm_|galaxy|ipad|phone|tablet|watch)_/i.test(entityId)) {
+    return true;
   }
 
   return false;
@@ -354,6 +394,66 @@ function findParentDeviceId(entityId, regEntry, allStatesMap, haClient) {
   }
 
   return null;
+}
+
+function getLightBaseId(entityId, regEntry) {
+  if (regEntry?.device_id) {
+    return `device_${regEntry.device_id}`;
+  }
+  return entityId.replace(/_(?:light|channel|relay)?_?(\d+)$/i, '');
+}
+
+function extractLightBaseFriendly(rawFriendly, deviceName) {
+  if (deviceName && deviceName.trim()) return cleanDeviceFriendlyName(deviceName);
+  if (!rawFriendly) return '';
+  const cleaned = cleanDeviceFriendlyName(rawFriendly);
+  return cleaned
+    .replace(/\s*[-–—:]?\s*(?:Light\s*\(\d+\)|Light\s*\d+|Channel\s*\d+|\d+)$/i, '')
+    .trim();
+}
+
+function getLightDeviceClass(lightType) {
+  if (lightType === 'extended_color') {
+    return ExtendedColorLightDevice;
+  } else if (lightType === 'color_temp') {
+    return ColorTemperatureLightDevice;
+  } else if (lightType === 'dimmable') {
+    return DimmableLightDevice;
+  }
+  return OnOffLightDevice;
+}
+
+function buildLightEndpointConfig(channel, id) {
+  const initialLevel = channel.brightness ? Math.max(1, Math.min(254, Math.round((channel.brightness / 255) * 254))) : 254;
+  const minM = channel.minMireds || 153;
+  const maxM = channel.maxMireds || 500;
+  const initialMireds = channel.colorTemp ? Math.max(minM, Math.min(maxM, channel.colorTemp)) : 250;
+
+  const endpointConfig = {
+    id: id || 'light',
+    onOff: { onOff: channel.isOn },
+  };
+
+  if (channel.lightType === 'dimmable' || channel.lightType === 'color_temp' || channel.lightType === 'extended_color') {
+    endpointConfig.levelControl = { currentLevel: initialLevel };
+  }
+
+  if (channel.lightType === 'color_temp' || channel.lightType === 'extended_color') {
+    endpointConfig.colorControl = {
+      colorMode: 2,
+      colorTempPhysicalMinMireds: minM,
+      colorTempPhysicalMaxMireds: maxM,
+      colorTemperatureMireds: initialMireds,
+      coupleColorTempToLevelMinMireds: minM,
+    };
+    if (channel.lightType === 'extended_color' && channel.xyColor) {
+      endpointConfig.colorControl.currentX = Math.round(channel.xyColor[0] * 65536);
+      endpointConfig.colorControl.currentY = Math.round(channel.xyColor[1] * 65536);
+      endpointConfig.colorControl.colorMode = 1;
+    }
+  }
+
+  return endpointConfig;
 }
 
 export class MatterManager {
@@ -455,6 +555,7 @@ export class MatterManager {
 
     const primaryDeviceIds = new Set();
     const primaryBaseIds = new Set();
+    const rawLights = [];
     const rawSensors = [];
 
     for (const [entityId, stateObj] of statesMap.entries()) {
@@ -474,7 +575,9 @@ export class MatterManager {
 
       // 1. Process Switches & Input Booleans (including Fountains / Pumps)
       if (domain === 'switch' || domain === 'input_boolean') {
-        const friendlyName = stateObj.attributes?.friendly_name || entityId;
+        const rawFriendly = stateObj.attributes?.friendly_name || entityId;
+        const regDeviceName = reg?.device_id ? this.haClient?.deviceRegistry?.get(reg.device_id)?.name : null;
+        const friendlyName = cleanDeviceFriendlyName(rawFriendly, regDeviceName);
         const isOn = stateObj.state === 'on';
         const isPump = isFountainOrPump(entityId, stateObj);
         const isSub = isChildOrAuxiliaryEntity(entityId, stateObj, reg, statesMap, this.haClient);
@@ -503,12 +606,8 @@ export class MatterManager {
         }
       }
 
-      // 2. Process Lights
+      // 2. Collect Candidate Lights (to group multi-channel lights / multi-gang switches)
       if (domain === 'light') {
-        const friendlyName = stateObj.attributes?.friendly_name || entityId;
-        const isOn = stateObj.state === 'on';
-        const colorModes = stateObj.attributes?.supported_color_modes || [];
-        const brightness = stateObj.attributes?.brightness !== undefined ? stateObj.attributes.brightness : null;
         const isSub = isChildOrAuxiliaryEntity(entityId, stateObj, reg, statesMap, this.haClient);
         const isAnnounced = this.enabledConfig[entityId]?.enabled === true || this.nodes.has(entityId);
 
@@ -519,77 +618,82 @@ export class MatterManager {
           }
         }
 
-        let colorTemp = null;
-        if (stateObj.attributes?.color_temp_kelvin) {
-          colorTemp = Math.round(1000000 / stateObj.attributes.color_temp_kelvin);
-        } else if (stateObj.attributes?.color_temp) {
-          colorTemp = stateObj.attributes.color_temp;
-        }
-
-        const xyColor = stateObj.attributes?.xy_color || null;
-
-        let minMireds = 153;
-        let maxMireds = 500;
-        if (stateObj.attributes?.max_color_temp_kelvin) {
-          minMireds = Math.max(1, Math.round(1000000 / stateObj.attributes.max_color_temp_kelvin));
-        } else if (stateObj.attributes?.min_mireds) {
-          minMireds = stateObj.attributes.min_mireds;
-        }
-
-        if (stateObj.attributes?.min_color_temp_kelvin) {
-          maxMireds = Math.max(minMireds, Math.round(1000000 / stateObj.attributes.min_color_temp_kelvin));
-        } else if (stateObj.attributes?.max_mireds) {
-          maxMireds = stateObj.attributes.max_mireds;
-        }
-
-        let lightType = 'onoff';
-        const hasColor = colorModes.some((m) => ['hs', 'rgb', 'rgbw', 'rgbww', 'xy'].includes(m));
-        const hasColorTemp = colorModes.includes('color_temp') || stateObj.attributes?.color_temp_kelvin !== undefined;
-        const hasBrightness = colorModes.includes('brightness') || brightness !== null;
-
-        if (hasColor) {
-          lightType = 'extended_color';
-        } else if (hasColorTemp) {
-          lightType = 'color_temp';
-        } else if (hasBrightness) {
-          lightType = 'dimmable';
-        }
-
         if (!isSub || this.showAllSensors || isAnnounced) {
-          this.discoveredDevices.set(entityId, {
-            id: entityId,
-            domain,
-            deviceKind: 'light',
-            lightType,
-            friendlyName,
-            isOn,
-            brightness,
-            colorTemp,
-            xyColor,
-            minMireds,
-            maxMireds,
+          rawLights.push({
             entityId,
-            isSubEntity: isSub,
+            stateObj,
+            reg,
+            isSub,
+            isAnnounced,
           });
-          if (!this.entityToDeviceId.has(entityId)) {
-            this.entityToDeviceId.set(entityId, entityId);
-          }
         }
       }
 
       // 3. Process Climate (Thermostats & ACs)
       if (domain === 'climate') {
-        const friendlyName = stateObj.attributes?.friendly_name || entityId;
+        const rawFriendly = stateObj.attributes?.friendly_name || entityId;
+        const regDeviceName = reg?.device_id ? this.haClient?.deviceRegistry?.get(reg.device_id)?.name : null;
+        const friendlyName = cleanDeviceFriendlyName(rawFriendly, regDeviceName);
         const supportedModes = stateObj.attributes?.hvac_modes || ['off', 'heat', 'cool'];
         const hasCool = supportedModes.includes('cool');
         const hasHeat = supportedModes.includes('heat');
         const hasAuto = supportedModes.includes('auto') || supportedModes.includes('heat_cool');
+
+        const supportedFeatures = stateObj.attributes?.supported_features || 0;
+        // ClimateEntityFeature.FAN_MODE is bit 3 (value 8)
+        const hasNativeFanMode = Boolean((supportedFeatures & 8) || (Array.isArray(stateObj.attributes?.fan_modes) && stateObj.attributes.fan_modes.length > 0));
         const rawFanModes = Array.isArray(stateObj.attributes?.fan_modes) ? stateObj.attributes.fan_modes : [];
-        const fanMode = stateObj.attributes?.fan_mode || null;
-        // Always provide fan modes for AC/Thermostat to enable full Google Home fan control
-        const fanModes = rawFanModes.length > 0
-          ? rawFanModes
-          : ['auto', 'low', 'medium', 'high'];
+        let fanMode = stateObj.attributes?.fan_mode || null;
+        const presetModes = Array.isArray(stateObj.attributes?.preset_modes) ? stateObj.attributes.preset_modes : [];
+        const presetMode = stateObj.attributes?.preset_mode || null;
+
+        // Check for companion fan or select entity on the same physical device
+        let companionFanEntity = null;
+        let companionSelectFan = null;
+        if (reg?.device_id && this.haClient?.entityRegistry) {
+          for (const [eId, eReg] of this.haClient.entityRegistry.entries()) {
+            if (eReg.device_id === reg.device_id && eId !== entityId) {
+              if (eId.startsWith('fan.')) {
+                companionFanEntity = eId;
+              } else if (eId.startsWith('select.') && /fan|speed/i.test(eId)) {
+                companionSelectFan = eId;
+              }
+            }
+          }
+        }
+
+        // Fallback name-based heuristic for companion fan
+        if (!companionFanEntity && statesMap) {
+          const baseName = entityId.split('.')[1];
+          for (const cand of [`fan.${baseName}`, `fan.${baseName}_fan`, `fan.${baseName}_speed`]) {
+            if (statesMap.has(cand)) {
+              companionFanEntity = cand;
+              break;
+            }
+          }
+        }
+
+        let fanModes = [];
+        if (hasNativeFanMode && rawFanModes.length > 0) {
+          fanModes = rawFanModes;
+        } else if (companionFanEntity) {
+          const fanState = statesMap.get(companionFanEntity);
+          fanModes = Array.isArray(fanState?.attributes?.preset_modes) && fanState.attributes.preset_modes.length > 0
+            ? fanState.attributes.preset_modes
+            : ['auto', 'low', 'medium', 'high'];
+          if (!fanMode) fanMode = fanState?.attributes?.preset_mode || (fanState?.state === 'on' ? 'high' : 'off');
+        } else if (companionSelectFan) {
+          const selState = statesMap.get(companionSelectFan);
+          fanModes = Array.isArray(selState?.attributes?.options) && selState.attributes.options.length > 0
+            ? selState.attributes.options
+            : ['auto', 'low', 'medium', 'high'];
+          if (!fanMode) fanMode = selState?.state || null;
+        } else if (presetModes.length > 0) {
+          fanModes = presetModes;
+          if (!fanMode) fanMode = presetMode;
+        } else {
+          fanModes = ['auto', 'low', 'medium', 'high'];
+        }
 
         const currentTemp = stateObj.attributes?.current_temperature ?? null;
         const targetTemp = stateObj.attributes?.temperature ?? null;
@@ -613,6 +717,11 @@ export class MatterManager {
           supportedModes,
           fanModes,
           fanMode,
+          presetModes,
+          presetMode,
+          hasNativeFanMode,
+          companionFanEntity,
+          companionSelectFan,
           hasCool: hasCool || (!hasHeat && !hasCool),
           hasHeat,
           hasAuto,
@@ -626,10 +735,25 @@ export class MatterManager {
           entityId,
         });
         this.entityToDeviceId.set(entityId, entityId);
+        if (companionFanEntity) {
+          this.entityToDeviceId.set(companionFanEntity, entityId);
+        }
+        if (companionSelectFan) {
+          this.entityToDeviceId.set(companionSelectFan, entityId);
+        }
       }
 
       // 4. Collect Candidate Sensors (Temperature, Humidity, Battery, Occupancy, Illuminance)
       if (domain === 'sensor' || domain === 'binary_sensor') {
+        // Exclude mobile app / phone tracker sensors
+        const isMobileDevice = /^(?:sensor|binary_sensor)\.(?:pixel|iphone|sm_|galaxy|ipad|phone|tablet|watch)_/i.test(entityId) ||
+          reg?.platform === 'mobile_app';
+        if (isMobileDevice) continue;
+
+        // Exclude vacuum cleaner battery sensors
+        const isVacuum = /^(?:sensor|binary_sensor)\..*?(?:roomba|vacuum|dreame|roborock).*?battery/i.test(entityId);
+        if (isVacuum) continue;
+
         const deviceClass = stateObj.attributes?.device_class;
         const unit = stateObj.attributes?.unit_of_measurement;
         const isTemp = deviceClass === 'temperature' || /_(temperature|temp)(?:_\d+)?$/i.test(entityId);
@@ -656,6 +780,138 @@ export class MatterManager {
       }
     }
 
+    // 2b. Group Lights: Single lights remain individual, Multi-channel lights (multi-gang switches) are grouped
+    const groupedLightsMap = new Map();
+    for (const l of rawLights) {
+      const baseId = getLightBaseId(l.entityId, l.reg);
+      if (!groupedLightsMap.has(baseId)) {
+        const regEntry = l.reg;
+        const devReg = regEntry?.device_id ? this.haClient?.deviceRegistry?.get(regEntry.device_id) : null;
+        const fallbackFriendly = extractLightBaseFriendly(l.stateObj.attributes?.friendly_name, devReg?.name_by_user || devReg?.name);
+        const deviceName = devReg?.name_by_user || devReg?.name || fallbackFriendly;
+
+        groupedLightsMap.set(baseId, {
+          baseId,
+          deviceId: regEntry?.device_id || null,
+          friendlyName: deviceName || fallbackFriendly || baseId,
+          channels: [],
+        });
+      }
+      groupedLightsMap.get(baseId).channels.push(l);
+    }
+
+    const buildLightChannel = (l) => {
+      const stateObj = l.stateObj;
+      const entityId = l.entityId;
+      const rawFriendly = stateObj.attributes?.friendly_name || entityId;
+      const friendlyName = cleanDeviceFriendlyName(rawFriendly);
+      const isOn = stateObj.state === 'on';
+      const colorModes = stateObj.attributes?.supported_color_modes || [];
+      const brightness = stateObj.attributes?.brightness !== undefined ? stateObj.attributes.brightness : null;
+
+      let colorTemp = null;
+      if (stateObj.attributes?.color_temp_kelvin) {
+        colorTemp = Math.round(1000000 / stateObj.attributes.color_temp_kelvin);
+      } else if (stateObj.attributes?.color_temp) {
+        colorTemp = stateObj.attributes.color_temp;
+      }
+
+      const xyColor = stateObj.attributes?.xy_color || null;
+
+      let minMireds = 153;
+      let maxMireds = 500;
+      if (stateObj.attributes?.max_color_temp_kelvin) {
+        minMireds = Math.max(1, Math.round(1000000 / stateObj.attributes.max_color_temp_kelvin));
+      } else if (stateObj.attributes?.min_mireds) {
+        minMireds = stateObj.attributes.min_mireds;
+      }
+
+      if (stateObj.attributes?.min_color_temp_kelvin) {
+        maxMireds = Math.max(minMireds, Math.round(1000000 / stateObj.attributes.min_color_temp_kelvin));
+      } else if (stateObj.attributes?.max_mireds) {
+        maxMireds = stateObj.attributes.max_mireds;
+      }
+
+      let lightType = 'onoff';
+      const hasColor = colorModes.some((m) => ['hs', 'rgb', 'rgbw', 'rgbww', 'xy'].includes(m));
+      const hasColorTemp = colorModes.includes('color_temp') || stateObj.attributes?.color_temp_kelvin !== undefined;
+      const hasBrightness = colorModes.includes('brightness') || brightness !== null;
+
+      if (hasColor) {
+        lightType = 'extended_color';
+      } else if (hasColorTemp) {
+        lightType = 'color_temp';
+      } else if (hasBrightness) {
+        lightType = 'dimmable';
+      }
+
+      return {
+        entityId,
+        friendlyName,
+        isOn,
+        brightness,
+        colorTemp,
+        xyColor,
+        minMireds,
+        maxMireds,
+        lightType,
+        isSub: l.isSub,
+      };
+    };
+
+    for (const [baseId, grp] of groupedLightsMap.entries()) {
+      if (grp.channels.length === 1) {
+        // Single light
+        const ch = buildLightChannel(grp.channels[0]);
+        const entityId = ch.entityId;
+        this.discoveredDevices.set(entityId, {
+          id: entityId,
+          domain: 'light',
+          deviceKind: 'light',
+          lightType: ch.lightType,
+          friendlyName: ch.friendlyName,
+          isOn: ch.isOn,
+          brightness: ch.brightness,
+          colorTemp: ch.colorTemp,
+          xyColor: ch.xyColor,
+          minMireds: ch.minMireds,
+          maxMireds: ch.maxMireds,
+          entityId,
+          isSubEntity: ch.isSub,
+          isMultiLight: false,
+        });
+        if (!this.entityToDeviceId.has(entityId)) {
+          this.entityToDeviceId.set(entityId, entityId);
+        }
+      } else {
+        // Multi-channel light device
+        const channels = grp.channels.map(buildLightChannel);
+        const overallOn = channels.some((c) => c.isOn);
+        const deviceId = baseId;
+        this.discoveredDevices.set(deviceId, {
+          id: deviceId,
+          domain: 'light',
+          deviceKind: 'light',
+          lightType: channels[0].lightType,
+          friendlyName: grp.friendlyName,
+          isOn: overallOn,
+          brightness: channels[0].brightness,
+          colorTemp: channels[0].colorTemp,
+          xyColor: channels[0].xyColor,
+          minMireds: channels[0].minMireds,
+          maxMireds: channels[0].maxMireds,
+          entityId: channels[0].entityId,
+          isSubEntity: false,
+          isMultiLight: true,
+          channels,
+        });
+        this.entityToDeviceId.set(deviceId, deviceId);
+        for (const ch of channels) {
+          this.entityToDeviceId.set(ch.entityId, deviceId);
+        }
+      }
+    }
+
     // Group sensors that belong together into physical devices
     const groupedSensors = new Map();
 
@@ -665,8 +921,10 @@ export class MatterManager {
 
       // Group key: Prefer HA device_id if available, otherwise heuristic base ID
       const baseId = regEntry?.device_id ? `device_${regEntry.device_id}` : getSensorBaseId(s.entityId);
-      const fallbackFriendly = extractSensorBaseFriendly(s.stateObj.attributes?.friendly_name || s.entityId);
-      const deviceName = devReg?.name_by_user || devReg?.name || fallbackFriendly;
+      const rawFallback = s.stateObj.attributes?.friendly_name || s.entityId;
+      const fallbackFriendly = extractSensorBaseFriendly(rawFallback);
+      const rawDeviceName = devReg?.name_by_user || devReg?.name || fallbackFriendly;
+      const deviceName = cleanDeviceFriendlyName(rawDeviceName);
 
       // Check if this sensor belongs to an existing primary device (switch, light, climate)
       const rawBaseName = s.entityId.split('.')[1]?.replace(/_(?:temperature|temp|humidity|humid|battery|bat|illuminance|occupancy|motion|presence|power|energy|voltage|current)(?:_\d+)?$/i, '');
@@ -716,8 +974,9 @@ export class MatterManager {
         continue;
       }
 
-      // Must have at least a temperature, humidity, battery or occupancy sensor (or when showing all or announced)
-      if (!group.temp && !group.humid && !group.occ && !group.bat && !this.showAllSensors && !isAnnounced) {
+      // Must have at least one primary environmental measurement (temperature, humidity, or occupancy)
+      const hasPrimarySensor = Boolean(group.temp || group.humid || group.occ);
+      if (!hasPrimarySensor && !this.showAllSensors && !isAnnounced) {
         continue;
       }
 
@@ -870,7 +1129,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.5.8',
+          softwareVersionString: '1.5.9',
         },
       });
 
@@ -881,7 +1140,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.5.8',
+            softwareVersionString: '1.5.9',
           },
         });
       } catch (err) {
@@ -1017,160 +1276,263 @@ export class MatterManager {
           }
         };
       } else if (dev.deviceKind === 'light') {
-        const initialLevel = dev.brightness ? Math.max(1, Math.min(254, Math.round((dev.brightness / 255) * 254))) : 254;
-        const minM = dev.minMireds || 153;
-        const maxM = dev.maxMireds || 500;
-        const initialMireds = dev.colorTemp ? Math.max(minM, Math.min(maxM, dev.colorTemp)) : 250;
-
-        const endpointConfig = {
-          id: 'light',
-          onOff: { onOff: dev.isOn },
-        };
-
-        if (dev.lightType === 'dimmable' || dev.lightType === 'color_temp' || dev.lightType === 'extended_color') {
-          endpointConfig.levelControl = { currentLevel: initialLevel };
-        }
-
-        if (dev.lightType === 'color_temp' || dev.lightType === 'extended_color') {
-          endpointConfig.colorControl = {
-            colorMode: 2,
-            colorTempPhysicalMinMireds: minM,
-            colorTempPhysicalMaxMireds: maxM,
-            colorTemperatureMireds: initialMireds,
-            coupleColorTempToLevelMinMireds: minM,
-          };
-          if (dev.lightType === 'extended_color' && dev.xyColor) {
-            endpointConfig.colorControl.currentX = Math.round(dev.xyColor[0] * 65536);
-            endpointConfig.colorControl.currentY = Math.round(dev.xyColor[1] * 65536);
-            endpointConfig.colorControl.colorMode = 1;
-          }
-        }
-
-        const endpoint = await node.add(lightDeviceClass, endpointConfig);
-        endpoints.light = endpoint;
-
         let updatingFromHA = false;
-        let debounceTimer = null;
-        const pendingPayload = {};
 
-        const sendLightUpdateToHA = (turnOn, data = {}) => {
-          Object.assign(pendingPayload, data);
-          if (!turnOn) {
-            if (debounceTimer) clearTimeout(debounceTimer);
-            debounceTimer = null;
-            dev.isOn = false;
-            info.isOn = false;
-            this.haClient.setEntityState(dev.entityId, false);
-            return;
+        if (dev.isMultiLight && Array.isArray(dev.channels) && dev.channels.length > 1) {
+          // Multi-channel light node: Add an endpoint for each physical channel
+          const channelEndpoints = new Map();
+
+          for (let i = 0; i < dev.channels.length; i++) {
+            const ch = dev.channels[i];
+            const epId = `light_${i + 1}`;
+            const epClass = getLightDeviceClass(ch.lightType);
+            const epConfig = buildLightEndpointConfig(ch, epId);
+
+            const ep = await node.add(epClass, epConfig);
+            channelEndpoints.set(ch.entityId, ep);
+            endpoints[epId] = ep;
+
+            let chDebounceTimer = null;
+            const chPendingPayload = {};
+
+            const sendChannelUpdateToHA = (turnOn, data = {}) => {
+              Object.assign(chPendingPayload, data);
+              if (!turnOn) {
+                if (chDebounceTimer) clearTimeout(chDebounceTimer);
+                chDebounceTimer = null;
+                ch.isOn = false;
+                this.haClient.setEntityState(ch.entityId, false);
+                return;
+              }
+
+              ch.isOn = true;
+              if (chDebounceTimer) clearTimeout(chDebounceTimer);
+              chDebounceTimer = setTimeout(async () => {
+                chDebounceTimer = null;
+                const toSend = { ...chPendingPayload };
+                for (const k of Object.keys(chPendingPayload)) delete chPendingPayload[k];
+                console.log(`[Matter Node: ${dev.friendlyName}] Syncing channel ${ch.friendlyName} to HA:`, toSend);
+                await this.haClient.setEntityState(ch.entityId, true, toSend);
+              }, 80);
+            };
+
+            const chOnOffEvent = ep.events.onOff.onOff$Changed || ep.events.onOff.events?.onOff$Changed;
+            if (chOnOffEvent) {
+              chOnOffEvent.on(async (newValue) => {
+                if (updatingFromHA) return;
+                console.log(`[Matter Node: ${dev.friendlyName} / ${ch.friendlyName}] onOff command: ${newValue ? 'ON' : 'OFF'}`);
+                sendChannelUpdateToHA(newValue);
+              });
+            }
+
+            if (ep.events.levelControl?.events?.currentLevel$Changed) {
+              ep.events.levelControl.events.currentLevel$Changed.on(async (newLevel) => {
+                if (updatingFromHA || newLevel === null || newLevel === undefined) return;
+                const haBrightness = Math.max(1, Math.min(255, Math.round((newLevel / 254) * 255)));
+                ch.brightness = haBrightness;
+                sendChannelUpdateToHA(true, { brightness: haBrightness });
+              });
+            }
+
+            if (ep.events.colorControl?.events?.colorTemperatureMireds$Changed) {
+              ep.events.colorControl.events.colorTemperatureMireds$Changed.on(async (mireds) => {
+                if (updatingFromHA || !mireds) return;
+                const kelvin = Math.round(1000000 / mireds);
+                ch.colorTemp = mireds;
+                sendChannelUpdateToHA(true, { color_temp_kelvin: kelvin });
+              });
+            }
           }
 
-          dev.isOn = true;
-          info.isOn = true;
-          if (debounceTimer) clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(async () => {
-            debounceTimer = null;
-            const toSend = { ...pendingPayload };
-            for (const k of Object.keys(pendingPayload)) delete pendingPayload[k];
-            console.log(`[Matter Node: ${dev.friendlyName}] Syncing light to HA:`, toSend);
-            await this.haClient.setEntityState(dev.entityId, true, toSend);
-          }, 80);
-        };
+          updateFromHA = async (newDev) => {
+            updatingFromHA = true;
+            try {
+              if (Array.isArray(newDev.channels)) {
+                for (const ch of newDev.channels) {
+                  const ep = channelEndpoints.get(ch.entityId);
+                  if (!ep) continue;
 
-        const lightOnOffEvent = endpoint.events.onOff.onOff$Changed || endpoint.events.onOff.events?.onOff$Changed;
-        if (lightOnOffEvent) {
-          lightOnOffEvent.on(async (newValue) => {
-            if (updatingFromHA) return;
-            console.log(`[Matter Node: ${dev.friendlyName}] Light onOff command: ${newValue ? 'ON' : 'OFF'}`);
-            sendLightUpdateToHA(newValue);
-          });
-        }
+                  if (ep.state.onOff.onOff !== ch.isOn) {
+                    await ep.set({ onOff: { onOff: ch.isOn } });
+                  }
 
-        if (endpoint.events.levelControl?.events?.currentLevel$Changed) {
-          endpoint.events.levelControl.events.currentLevel$Changed.on(async (newLevel) => {
-            if (updatingFromHA || newLevel === null || newLevel === undefined) return;
-            const haBrightness = Math.max(1, Math.min(255, Math.round((newLevel / 254) * 255)));
-            console.log(`[Matter Node: ${dev.friendlyName}] Light brightness command: ${haBrightness}/255 (Matter: ${newLevel})`);
-            dev.brightness = haBrightness;
-            info.brightness = haBrightness;
-            sendLightUpdateToHA(true, { brightness: haBrightness });
-          });
-        }
+                  if (ep.behaviors.supported.levelControl && ch.brightness !== null && ch.brightness !== undefined) {
+                    const mLevel = Math.max(1, Math.min(254, Math.round((ch.brightness / 255) * 254)));
+                    if (ep.state.levelControl.currentLevel !== mLevel) {
+                      await ep.set({ levelControl: { currentLevel: mLevel } });
+                    }
+                  }
 
-        if (endpoint.events.colorControl?.events?.colorTemperatureMireds$Changed) {
-          endpoint.events.colorControl.events.colorTemperatureMireds$Changed.on(async (mireds) => {
-            if (updatingFromHA || !mireds) return;
-            const kelvin = Math.round(1000000 / mireds);
-            console.log(`[Matter Node: ${dev.friendlyName}] Light colorTemp command: ${mireds} mireds (${kelvin}K)`);
-            dev.colorTemp = mireds;
-            info.colorTemp = mireds;
-            sendLightUpdateToHA(true, { color_temp_kelvin: kelvin });
-          });
-        }
-
-        if (endpoint.events.colorControl?.events?.currentX$Changed && endpoint.events.colorControl?.events?.currentY$Changed) {
-          const handleXyChange = () => {
-            if (updatingFromHA) return;
-            const x = endpoint.state.colorControl.currentX / 65536;
-            const y = endpoint.state.colorControl.currentY / 65536;
-            console.log(`[Matter Node: ${dev.friendlyName}] Light xy color command: [${x.toFixed(4)}, ${y.toFixed(4)}]`);
-            dev.xyColor = [x, y];
-            info.xyColor = [x, y];
-            sendLightUpdateToHA(true, { xy_color: [x, y] });
+                  if (ep.behaviors.supported.colorControl && ch.colorTemp) {
+                    const minVal = ep.state.colorControl.colorTempPhysicalMinMireds || 153;
+                    const maxVal = ep.state.colorControl.colorTempPhysicalMaxMireds || 500;
+                    const clampedM = Math.max(minVal, Math.min(maxVal, ch.colorTemp));
+                    if (ep.state.colorControl.colorTemperatureMireds !== clampedM) {
+                      await ep.set({ colorControl: { colorMode: 2, colorTemperatureMireds: clampedM } });
+                    }
+                  }
+                }
+              }
+            } finally {
+              updatingFromHA = false;
+            }
           };
-          endpoint.events.colorControl.events.currentX$Changed.on(handleXyChange);
-          endpoint.events.colorControl.events.currentY$Changed.on(handleXyChange);
-        }
+        } else {
+          // Single light endpoint (Standard)
+          const initialLevel = dev.brightness ? Math.max(1, Math.min(254, Math.round((dev.brightness / 255) * 254))) : 254;
+          const minM = dev.minMireds || 153;
+          const maxM = dev.maxMireds || 500;
+          const initialMireds = dev.colorTemp ? Math.max(minM, Math.min(maxM, dev.colorTemp)) : 250;
 
-        updateFromHA = async (newDev) => {
-          updatingFromHA = true;
-          try {
-            if (endpoint.state.onOff.onOff !== newDev.isOn) {
-              await endpoint.set({ onOff: { onOff: newDev.isOn } });
-              info.isOn = newDev.isOn;
-            }
+          const endpointConfig = {
+            id: 'light',
+            onOff: { onOff: dev.isOn },
+          };
 
-            if (endpoints.light.behaviors.supported.levelControl && newDev.brightness !== null && newDev.brightness !== undefined) {
-              const mLevel = Math.max(1, Math.min(254, Math.round((newDev.brightness / 255) * 254)));
-              if (endpoint.state.levelControl.currentLevel !== mLevel) {
-                await endpoint.set({ levelControl: { currentLevel: mLevel } });
-                info.brightness = newDev.brightness;
-              }
-            }
-
-            if (endpoints.light.behaviors.supported.colorControl) {
-              if (newDev.colorTemp) {
-                const minVal = endpoint.state.colorControl.colorTempPhysicalMinMireds || 153;
-                const maxVal = endpoint.state.colorControl.colorTempPhysicalMaxMireds || 500;
-                const clampedM = Math.max(minVal, Math.min(maxVal, newDev.colorTemp));
-                if (endpoint.state.colorControl.colorTemperatureMireds !== clampedM) {
-                  await endpoint.set({
-                    colorControl: {
-                      colorMode: 2,
-                      colorTemperatureMireds: clampedM,
-                    },
-                  });
-                  info.colorTemp = newDev.colorTemp;
-                }
-              }
-              if (newDev.xyColor && Array.isArray(newDev.xyColor) && newDev.xyColor.length === 2) {
-                const mX = Math.round(newDev.xyColor[0] * 65536);
-                const mY = Math.round(newDev.xyColor[1] * 65536);
-                if (endpoint.state.colorControl.currentX !== mX || endpoint.state.colorControl.currentY !== mY) {
-                  await endpoint.set({
-                    colorControl: {
-                      colorMode: 1,
-                      currentX: mX,
-                      currentY: mY,
-                    },
-                  });
-                  info.xyColor = newDev.xyColor;
-                }
-              }
-            }
-          } finally {
-            updatingFromHA = false;
+          if (dev.lightType === 'dimmable' || dev.lightType === 'color_temp' || dev.lightType === 'extended_color') {
+            endpointConfig.levelControl = { currentLevel: initialLevel };
           }
-        };
+
+          if (dev.lightType === 'color_temp' || dev.lightType === 'extended_color') {
+            endpointConfig.colorControl = {
+              colorMode: 2,
+              colorTempPhysicalMinMireds: minM,
+              colorTempPhysicalMaxMireds: maxM,
+              colorTemperatureMireds: initialMireds,
+              coupleColorTempToLevelMinMireds: minM,
+            };
+            if (dev.lightType === 'extended_color' && dev.xyColor) {
+              endpointConfig.colorControl.currentX = Math.round(dev.xyColor[0] * 65536);
+              endpointConfig.colorControl.currentY = Math.round(dev.xyColor[1] * 65536);
+              endpointConfig.colorControl.colorMode = 1;
+            }
+          }
+
+          const endpoint = await node.add(lightDeviceClass, endpointConfig);
+          endpoints.light = endpoint;
+
+          let debounceTimer = null;
+          const pendingPayload = {};
+
+          const sendLightUpdateToHA = (turnOn, data = {}) => {
+            Object.assign(pendingPayload, data);
+            if (!turnOn) {
+              if (debounceTimer) clearTimeout(debounceTimer);
+              debounceTimer = null;
+              dev.isOn = false;
+              info.isOn = false;
+              this.haClient.setEntityState(dev.entityId, false);
+              return;
+            }
+
+            dev.isOn = true;
+            info.isOn = true;
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(async () => {
+              debounceTimer = null;
+              const toSend = { ...pendingPayload };
+              for (const k of Object.keys(pendingPayload)) delete pendingPayload[k];
+              console.log(`[Matter Node: ${dev.friendlyName}] Syncing light to HA:`, toSend);
+              await this.haClient.setEntityState(dev.entityId, true, toSend);
+            }, 80);
+          };
+
+          const lightOnOffEvent = endpoint.events.onOff.onOff$Changed || endpoint.events.onOff.events?.onOff$Changed;
+          if (lightOnOffEvent) {
+            lightOnOffEvent.on(async (newValue) => {
+              if (updatingFromHA) return;
+              console.log(`[Matter Node: ${dev.friendlyName}] Light onOff command: ${newValue ? 'ON' : 'OFF'}`);
+              sendLightUpdateToHA(newValue);
+            });
+          }
+
+          if (endpoint.events.levelControl?.events?.currentLevel$Changed) {
+            endpoint.events.levelControl.events.currentLevel$Changed.on(async (newLevel) => {
+              if (updatingFromHA || newLevel === null || newLevel === undefined) return;
+              const haBrightness = Math.max(1, Math.min(255, Math.round((newLevel / 254) * 255)));
+              console.log(`[Matter Node: ${dev.friendlyName}] Light brightness command: ${haBrightness}/255 (Matter: ${newLevel})`);
+              dev.brightness = haBrightness;
+              info.brightness = haBrightness;
+              sendLightUpdateToHA(true, { brightness: haBrightness });
+            });
+          }
+
+          if (endpoint.events.colorControl?.events?.colorTemperatureMireds$Changed) {
+            endpoint.events.colorControl.events.colorTemperatureMireds$Changed.on(async (mireds) => {
+              if (updatingFromHA || !mireds) return;
+              const kelvin = Math.round(1000000 / mireds);
+              console.log(`[Matter Node: ${dev.friendlyName}] Light colorTemp command: ${mireds} mireds (${kelvin}K)`);
+              dev.colorTemp = mireds;
+              info.colorTemp = mireds;
+              sendLightUpdateToHA(true, { color_temp_kelvin: kelvin });
+            });
+          }
+
+          if (endpoint.events.colorControl?.events?.currentX$Changed && endpoint.events.colorControl?.events?.currentY$Changed) {
+            const handleXyChange = () => {
+              if (updatingFromHA) return;
+              const x = endpoint.state.colorControl.currentX / 65536;
+              const y = endpoint.state.colorControl.currentY / 65536;
+              console.log(`[Matter Node: ${dev.friendlyName}] Light xy color command: [${x.toFixed(4)}, ${y.toFixed(4)}]`);
+              dev.xyColor = [x, y];
+              info.xyColor = [x, y];
+              sendLightUpdateToHA(true, { xy_color: [x, y] });
+            };
+            endpoint.events.colorControl.events.currentX$Changed.on(handleXyChange);
+            endpoint.events.colorControl.events.currentY$Changed.on(handleXyChange);
+          }
+
+          updateFromHA = async (newDev) => {
+            updatingFromHA = true;
+            try {
+              if (endpoint.state.onOff.onOff !== newDev.isOn) {
+                await endpoint.set({ onOff: { onOff: newDev.isOn } });
+                info.isOn = newDev.isOn;
+              }
+
+              if (endpoints.light.behaviors.supported.levelControl && newDev.brightness !== null && newDev.brightness !== undefined) {
+                const mLevel = Math.max(1, Math.min(254, Math.round((newDev.brightness / 255) * 254)));
+                if (endpoint.state.levelControl.currentLevel !== mLevel) {
+                  await endpoint.set({ levelControl: { currentLevel: mLevel } });
+                  info.brightness = newDev.brightness;
+                }
+              }
+
+              if (endpoints.light.behaviors.supported.colorControl) {
+                if (newDev.colorTemp) {
+                  const minVal = endpoint.state.colorControl.colorTempPhysicalMinMireds || 153;
+                  const maxVal = endpoint.state.colorControl.colorTempPhysicalMaxMireds || 500;
+                  const clampedM = Math.max(minVal, Math.min(maxVal, newDev.colorTemp));
+                  if (endpoint.state.colorControl.colorTemperatureMireds !== clampedM) {
+                    await endpoint.set({
+                      colorControl: {
+                        colorMode: 2,
+                        colorTemperatureMireds: clampedM,
+                      },
+                    });
+                    info.colorTemp = newDev.colorTemp;
+                  }
+                }
+                if (newDev.xyColor && Array.isArray(newDev.xyColor) && newDev.xyColor.length === 2) {
+                  const mX = Math.round(newDev.xyColor[0] * 65536);
+                  const mY = Math.round(newDev.xyColor[1] * 65536);
+                  if (endpoint.state.colorControl.currentX !== mX || endpoint.state.colorControl.currentY !== mY) {
+                    await endpoint.set({
+                      colorControl: {
+                        colorMode: 1,
+                        currentX: mX,
+                        currentY: mY,
+                      },
+                    });
+                    info.xyColor = newDev.xyColor;
+                  }
+                }
+              }
+            } finally {
+              updatingFromHA = false;
+            }
+          };
+        }
       } else if (dev.deviceKind === 'climate') {
         const features = [];
         if (dev.hasHeat) features.push(Thermostat.Feature.Heating);
@@ -1334,6 +1696,70 @@ export class MatterManager {
 
         // Fan Speed & Fan Mode for Google Home (Native on Thermostat Endpoint)
         let fanDebounceTimer = null;
+
+        const applyFanCommand = async (targetHaMode, pct, spd) => {
+          if (updatingFromHA) return;
+          console.log(`[Matter Node: ${dev.friendlyName}] Fan command -> mode="${targetHaMode}", pct=${pct}%, spd=${spd}`);
+          dev.fanMode = targetHaMode;
+          info.fanMode = targetHaMode;
+
+          // 1. Companion fan entity (if physical device exposes a linked fan in HA)
+          if (dev.companionFanEntity) {
+            try {
+              if (pct !== null && pct !== undefined) {
+                await this.haClient.callService('fan', 'set_percentage', dev.companionFanEntity, { percentage: pct });
+              } else {
+                await this.haClient.callService('fan', 'set_preset_mode', dev.companionFanEntity, { preset_mode: targetHaMode });
+              }
+              return;
+            } catch (err) {
+              console.warn(`[Matter Node: ${dev.friendlyName}] Companion fan service call failed:`, err.message);
+            }
+          }
+
+          // 2. Companion select entity for fan speed
+          if (dev.companionSelectFan) {
+            try {
+              await this.haClient.callService('select', 'select_option', dev.companionSelectFan, { option: targetHaMode });
+              return;
+            } catch (err) {
+              console.warn(`[Matter Node: ${dev.friendlyName}] Companion select service call failed:`, err.message);
+            }
+          }
+
+          // 3. Native climate.set_fan_mode (if supported by the climate integration)
+          if (dev.hasNativeFanMode) {
+            try {
+              await this.haClient.callService('climate', 'set_fan_mode', dev.entityId, { fan_mode: targetHaMode });
+              return;
+            } catch (err) {
+              console.warn(`[Matter Node: ${dev.friendlyName}] climate.set_fan_mode failed:`, err.message);
+            }
+          }
+
+          // 4. Climate preset_mode fallback (e.g. low/medium/high/boost/turbo)
+          if (Array.isArray(dev.presetModes) && dev.presetModes.length > 0) {
+            const match = dev.presetModes.find((p) => p.toLowerCase() === targetHaMode?.toLowerCase()) ||
+              (targetHaMode === 'low' && dev.presetModes.find((p) => /low|quiet|silent|eco/i.test(p))) ||
+              (targetHaMode === 'high' && dev.presetModes.find((p) => /high|boost|turbo|max/i.test(p)));
+            if (match) {
+              try {
+                await this.haClient.callService('climate', 'set_preset_mode', dev.entityId, { preset_mode: match });
+                return;
+              } catch (err) {
+                console.warn(`[Matter Node: ${dev.friendlyName}] climate.set_preset_mode failed:`, err.message);
+              }
+            }
+          }
+
+          // 5. Try climate.set_fan_mode safely
+          try {
+            await this.haClient.callService('climate', 'set_fan_mode', dev.entityId, { fan_mode: targetHaMode });
+          } catch (err) {
+            console.warn(`[Matter Node: ${dev.friendlyName}] AC entity does not support climate.set_fan_mode and no companion fan entity was found: ${err.message}`);
+          }
+        };
+
         if (endpoint.events?.fanControl) {
           const fanModeEvent = endpoint.events.fanControl.events?.fanMode$Changed || endpoint.events.fanControl.events?.fanMode$Changing;
           if (fanModeEvent) {
@@ -1341,10 +1767,7 @@ export class MatterManager {
               if (updatingFromHA) return;
               const targetHaMode = matterFanModeToHa(newMode, dev.fanModes);
               if (!targetHaMode) return;
-              console.log(`[Matter Node: ${dev.friendlyName}] Fan mode command: ${newMode} -> HA fan_mode: ${targetHaMode}`);
-              dev.fanMode = targetHaMode;
-              info.fanMode = targetHaMode;
-              await this.haClient.callService('climate', 'set_fan_mode', dev.entityId, { fan_mode: targetHaMode });
+              await applyFanCommand(targetHaMode, null, null);
             });
           }
 
@@ -1355,10 +1778,7 @@ export class MatterManager {
               fanDebounceTimer = null;
               const targetHaMode = percentToHaFanMode(pct, dev.fanModes);
               if (!targetHaMode) return;
-              console.log(`[Matter Node: ${dev.friendlyName}] Fan speed percent command: ${pct}% -> HA fan_mode: ${targetHaMode}`);
-              dev.fanMode = targetHaMode;
-              info.fanMode = targetHaMode;
-              await this.haClient.callService('climate', 'set_fan_mode', dev.entityId, { fan_mode: targetHaMode });
+              await applyFanCommand(targetHaMode, pct, null);
             }, 100);
           };
 
@@ -1376,10 +1796,7 @@ export class MatterManager {
                 fanDebounceTimer = null;
                 const targetHaMode = speedToHaFanMode(spd, dev.fanModes);
                 if (!targetHaMode) return;
-                console.log(`[Matter Node: ${dev.friendlyName}] Fan speed step command: ${spd} -> HA fan_mode: ${targetHaMode}`);
-                dev.fanMode = targetHaMode;
-                info.fanMode = targetHaMode;
-                await this.haClient.callService('climate', 'set_fan_mode', dev.entityId, { fan_mode: targetHaMode });
+                await applyFanCommand(targetHaMode, null, spd);
               }, 100);
             });
           }
@@ -1673,41 +2090,68 @@ export class MatterManager {
     if (dev.deviceKind === 'switch') {
       dev.isOn = change.state;
     } else if (dev.deviceKind === 'light') {
-      dev.isOn = change.state;
-      if (change.attributes?.brightness !== undefined) {
-        dev.brightness = change.attributes.brightness;
-      }
-      if (change.attributes?.color_temp_kelvin !== undefined && change.attributes.color_temp_kelvin !== null) {
-        dev.colorTemp = Math.round(1000000 / change.attributes.color_temp_kelvin);
-      } else if (change.attributes?.color_temp !== undefined && change.attributes.color_temp !== null) {
-        dev.colorTemp = change.attributes.color_temp;
-      }
-      if (change.attributes?.xy_color !== undefined) {
-        dev.xyColor = change.attributes.xy_color;
+      if (dev.isMultiLight && Array.isArray(dev.channels)) {
+        const ch = dev.channels.find((c) => c.entityId === entity_id);
+        if (ch) {
+          ch.isOn = change.state;
+          if (change.attributes?.brightness !== undefined) ch.brightness = change.attributes.brightness;
+          if (change.attributes?.color_temp_kelvin !== undefined && change.attributes.color_temp_kelvin !== null) {
+            ch.colorTemp = Math.round(1000000 / change.attributes.color_temp_kelvin);
+          } else if (change.attributes?.color_temp !== undefined && change.attributes.color_temp !== null) {
+            ch.colorTemp = change.attributes.color_temp;
+          }
+          if (change.attributes?.xy_color !== undefined) ch.xyColor = change.attributes.xy_color;
+        }
+        dev.isOn = dev.channels.some((c) => c.isOn);
+      } else {
+        dev.isOn = change.state;
+        if (change.attributes?.brightness !== undefined) {
+          dev.brightness = change.attributes.brightness;
+        }
+        if (change.attributes?.color_temp_kelvin !== undefined && change.attributes.color_temp_kelvin !== null) {
+          dev.colorTemp = Math.round(1000000 / change.attributes.color_temp_kelvin);
+        } else if (change.attributes?.color_temp !== undefined && change.attributes.color_temp !== null) {
+          dev.colorTemp = change.attributes.color_temp;
+        }
+        if (change.attributes?.xy_color !== undefined) {
+          dev.xyColor = change.attributes.xy_color;
+        }
       }
     } else if (dev.deviceKind === 'climate') {
-      dev.hvacMode = change.raw_state;
-      dev.isOn = dev.hvacMode !== 'off';
-      if (change.attributes?.current_temperature !== undefined) {
-        dev.currentTemp = change.attributes.current_temperature;
-      }
-      if (change.attributes?.temperature !== undefined) {
-        dev.targetTemp = change.attributes.temperature;
-      }
-      if (change.attributes?.target_temp_low !== undefined) {
-        dev.targetTempLow = change.attributes.target_temp_low;
-      }
-      if (change.attributes?.target_temp_high !== undefined) {
-        dev.targetTempHigh = change.attributes.target_temp_high;
-      }
-      if (change.attributes?.hvac_action !== undefined) {
-        dev.hvacAction = change.attributes.hvac_action;
-      }
-      if (change.attributes?.fan_mode !== undefined) {
-        dev.fanMode = change.attributes.fan_mode;
-      }
-      if (change.attributes?.fan_modes !== undefined && Array.isArray(change.attributes.fan_modes) && change.attributes.fan_modes.length > 0) {
-        dev.fanModes = change.attributes.fan_modes;
+      if (dev.companionFanEntity === entity_id) {
+        if (change.attributes?.preset_mode !== undefined) {
+          dev.fanMode = change.attributes.preset_mode;
+        } else if (change.attributes?.percentage !== undefined) {
+          dev.fanPercent = change.attributes.percentage;
+        }
+      } else if (dev.companionSelectFan === entity_id) {
+        if (change.raw_state) {
+          dev.fanMode = change.raw_state;
+        }
+      } else {
+        dev.hvacMode = change.raw_state;
+        dev.isOn = dev.hvacMode !== 'off';
+        if (change.attributes?.current_temperature !== undefined) {
+          dev.currentTemp = change.attributes.current_temperature;
+        }
+        if (change.attributes?.temperature !== undefined) {
+          dev.targetTemp = change.attributes.temperature;
+        }
+        if (change.attributes?.target_temp_low !== undefined) {
+          dev.targetTempLow = change.attributes.target_temp_low;
+        }
+        if (change.attributes?.target_temp_high !== undefined) {
+          dev.targetTempHigh = change.attributes.target_temp_high;
+        }
+        if (change.attributes?.hvac_action !== undefined) {
+          dev.hvacAction = change.attributes.hvac_action;
+        }
+        if (change.attributes?.fan_mode !== undefined) {
+          dev.fanMode = change.attributes.fan_mode;
+        }
+        if (change.attributes?.fan_modes !== undefined && Array.isArray(change.attributes.fan_modes) && change.attributes.fan_modes.length > 0) {
+          dev.fanModes = change.attributes.fan_modes;
+        }
       }
     } else if (dev.deviceKind === 'sensor') {
       const numVal = parseFloat(change.raw_state);
@@ -1738,6 +2182,8 @@ export class MatterManager {
           isSubSensor: !!dev.isSubSensor,
           isSubEntity: !!dev.isSubEntity,
           isMultiSensor: !!dev.isMultiSensor,
+          isMultiLight: !!dev.isMultiLight,
+          channels: dev.channels || [],
           isCommissioned: !!activeEntry.node.lifecycle.isCommissioned,
           isAnnounced: true,
         });
@@ -1751,6 +2197,8 @@ export class MatterManager {
           isSubSensor: !!dev.isSubSensor,
           isSubEntity: !!dev.isSubEntity,
           isMultiSensor: !!dev.isMultiSensor,
+          isMultiLight: !!dev.isMultiLight,
+          channels: dev.channels || [],
           lightType: dev.lightType || null,
           hvacMode: dev.hvacMode || null,
           hvacAction: dev.hvacAction || null,
@@ -1790,9 +2238,25 @@ export class MatterManager {
     });
   }
 
-  async toggleFromWeb(deviceId) {
+  async toggleFromWeb(deviceId, targetEntityId) {
     const dev = this.discoveredDevices.get(deviceId);
     if (!dev) return false;
+
+    if (targetEntityId) {
+      const stateObj = this.lastStates?.get(targetEntityId);
+      const newState = !(stateObj?.state === 'on');
+      return await this.haClient.setEntityState(targetEntityId, newState);
+    }
+
+    if (dev.isMultiLight && Array.isArray(dev.channels) && dev.channels.length > 0) {
+      const targetState = !dev.isOn;
+      let allOk = true;
+      for (const ch of dev.channels) {
+        const ok = await this.haClient.setEntityState(ch.entityId, targetState);
+        if (!ok) allOk = false;
+      }
+      return allOk;
+    }
 
     if (dev.deviceKind === 'climate') {
       if (dev.hvacMode !== 'off') {

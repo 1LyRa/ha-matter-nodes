@@ -767,6 +767,39 @@ body {
   color: #ffffff;
 }
 
+.multi-channel-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.channel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.channel-row:last-child {
+  border-bottom: none;
+}
+
+.channel-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.channel-btn {
+  padding: 4px 10px;
+  font-size: 0.78rem;
+}
+
 /* Empty & Loading */
 .loading-state, .empty-state {
   grid-column: 1 / -1;

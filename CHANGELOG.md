@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.9
+
+- **Multi-Channel Light Grouping**: Automatically detects multi-gang wall switches and multi-channel light fixtures (e.g. Aqara Smart Wall Switch Light 1 & Light 2, RFSAI dual lights) and groups them into a single physical Matter device with independent Matter endpoints.
+- **Multi-Channel Dashboard Controls**: Dashboard cards for multi-channel lights now display each channel's name, live state indicator, and discrete toggle controls directly in the web UI.
+- **Resilient AC Fan Speed Routing**: Intelligently inspects Home Assistant climate entities for fan control support (`ClimateEntityFeature.FAN_MODE`). If the climate entity does not natively accept `climate.set_fan_mode`, fan speed and percentage adjustments from Google Home are seamlessly dispatched to companion fan entities (`fan.*`), companion selects (`select.*`), or climate preset modes (`low`, `medium`, `high`), preventing `ServiceValidationError` crashes.
+- **Fountain & Pump Preservation & Name Deduplication**: Ensures fountains/pumps with `raw_power` in their entity ID (e.g. `switch.bedroom_fountain_new_bedroom_fountain_raw_power`) are recognized as primary pump devices and never erroneously hidden as auxiliary switches. Automatically deduplicates repetitive integration naming patterns (e.g. "Bedroom fountain Bedroom fountain raw power" -> "Bedroom fountain", "Air conditioner Air conditioner" -> "Air conditioner").
+- **Exclusion of Battery-Only Diagnostic Entities & Vacuum Helpers**: Strictly suppresses mobile phone battery sensors (`sensor.pixel_8_battery_level`), robot vacuum battery and auxiliary switches (`switch.roomba_prime_pad_dry`, `switch.roomba_schedule_*`, `input_boolean.roomba_*_light_owned`), and door/window contact sensor battery indicators from generating empty "Multi-Sensor" cards. Multi-sensor qualification now requires at least one primary environmental measurement (temperature, humidity, or occupancy).
+
 ## 1.5.8
 
 - **Unified Single-Entity Climate & AC**: Removed the secondary composed `FanDevice` endpoint (Endpoint 2). Because Google Home natively maps and displays fan speed sliders, percentage controls, and Auto/Low/Medium/High modes directly on the primary AC page via Endpoint 1's `FanControlServer`, removing Endpoint 2 prevents Google Home from generating an unwanted separate standalone "Fan" tile in the room. All fan controls, on/off toggles, and temperature controls now live unified inside the single AC card.
