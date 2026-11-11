@@ -1,5 +1,13 @@
 import { ServerNode, Environment } from '@matter/main';
-import { OnOffPlugInUnitDevice, TemperatureSensorDevice, HumiditySensorDevice } from '@matter/main/devices';
+import {
+  OnOffPlugInUnitDevice,
+  TemperatureSensorDevice,
+  HumiditySensorDevice,
+  OnOffLightDevice,
+  DimmableLightDevice,
+  ColorTemperatureLightDevice,
+  ExtendedColorLightDevice,
+} from '@matter/main/devices';
 import { PowerSourceServer } from '@matter/main/behaviors/power-source';
 import QRCode from 'qrcode';
 import fs from 'fs';
@@ -135,7 +143,48 @@ export class MatterManager {
         this.entityToDeviceId.set(entityId, entityId);
       }
 
-      // 2. Collect Candidate Sensors (Temperature, Humidity, Battery)
+      // 2. Process Lights
+      if (domain === 'light') {
+        const friendlyName = stateObj.attributes?.friendly_name || entityId;
+        const isOn = stateObj.state === 'on';
+        const colorModes = stateObj.attributes?.supported_color_modes || [];
+        const brightness = stateObj.attributes?.brightness !== undefined ? stateObj.attributes.brightness : null;
+        const colorTemp = stateObj.attributes?.color_temp || null;
+        const xyColor = stateObj.attributes?.xy_color || null;
+        const minMireds = stateObj.attributes?.min_mireds || 153;
+        const maxMireds = stateObj.attributes?.max_mireds || 500;
+
+        let lightType = 'onoff';
+        const hasColor = colorModes.some((m) => ['hs', 'rgb', 'rgbw', 'rgbww', 'xy'].includes(m));
+        const hasColorTemp = colorModes.includes('color_temp');
+        const hasBrightness = colorModes.includes('brightness') || brightness !== null;
+
+        if (hasColor) {
+          lightType = 'extended_color';
+        } else if (hasColorTemp) {
+          lightType = 'color_temp';
+        } else if (hasBrightness) {
+          lightType = 'dimmable';
+        }
+
+        this.discoveredDevices.set(entityId, {
+          id: entityId,
+          domain,
+          deviceKind: 'light',
+          lightType,
+          friendlyName,
+          isOn,
+          brightness,
+          colorTemp,
+          xyColor,
+          minMireds,
+          maxMireds,
+          entityId,
+        });
+        this.entityToDeviceId.set(entityId, entityId);
+      }
+
+      // 3. Collect Candidate Sensors (Temperature, Humidity, Battery)
       if (domain === 'sensor') {
         const deviceClass = stateObj.attributes?.device_class;
         const unit = stateObj.attributes?.unit_of_measurement;
@@ -248,10 +297,25 @@ export class MatterManager {
     console.log(`[Matter Manager] Starting Matter node for [${dev.friendlyName}] (${dev.deviceKind}) on port ${port}, discriminator ${discriminator}...`);
 
     try {
-      const primaryDeviceType =
-        dev.deviceKind === 'switch'
-          ? OnOffPlugInUnitDevice.deviceType
-          : TemperatureSensorDevice.deviceType;
+      let primaryDeviceType;
+      let lightDeviceClass = null;
+
+      if (dev.deviceKind === 'switch') {
+        primaryDeviceType = OnOffPlugInUnitDevice.deviceType;
+      } else if (dev.deviceKind === 'light') {
+        if (dev.lightType === 'extended_color') {
+          lightDeviceClass = ExtendedColorLightDevice;
+        } else if (dev.lightType === 'color_temp') {
+          lightDeviceClass = ColorTemperatureLightDevice;
+        } else if (dev.lightType === 'dimmable') {
+          lightDeviceClass = DimmableLightDevice;
+        } else {
+          lightDeviceClass = OnOffLightDevice;
+        }
+        primaryDeviceType = lightDeviceClass.deviceType;
+      } else {
+        primaryDeviceType = TemperatureSensorDevice.deviceType;
+      }
 
       const node = await ServerNode.create({
         id: sanitizedId,
@@ -268,6 +332,19 @@ export class MatterManager {
           deviceType: primaryDeviceType,
           vendorId: 0xfff1,
           productId: 0x8000 + (port % 1000),
+        },
+        basicInformation: {
+          vendorName: 'Home Assistant',
+          vendorId: 0xfff1,
+          productId: 0x8000 + (port % 1000),
+          nodeLabel: dev.friendlyName.slice(0, 32),
+          productName: dev.friendlyName.slice(0, 32),
+          productLabel: dev.friendlyName.slice(0, 64),
+          serialNumber: (dev.entityId || sanitizedId).slice(0, 32),
+          hardwareVersion: 1,
+          hardwareVersionString: '1.0',
+          softwareVersion: 1,
+          softwareVersionString: '1.3.0',
         },
       });
 
@@ -376,6 +453,157 @@ export class MatterManager {
             info.humidity = newDev.humidity;
           }
         };
+      } else if (dev.deviceKind === 'light') {
+        const initialLevel = dev.brightness ? Math.max(1, Math.min(254, Math.round((dev.brightness / 255) * 254))) : 254;
+        const minM = dev.minMireds || 153;
+        const maxM = dev.maxMireds || 500;
+        const initialMireds = dev.colorTemp ? Math.max(minM, Math.min(maxM, dev.colorTemp)) : 250;
+
+        const endpointConfig = {
+          id: 'light',
+          onOff: { onOff: dev.isOn },
+        };
+
+        if (dev.lightType === 'dimmable' || dev.lightType === 'color_temp' || dev.lightType === 'extended_color') {
+          endpointConfig.levelControl = { currentLevel: initialLevel };
+        }
+
+        if (dev.lightType === 'color_temp' || dev.lightType === 'extended_color') {
+          endpointConfig.colorControl = {
+            colorMode: 2,
+            colorTempPhysicalMinMireds: minM,
+            colorTempPhysicalMaxMireds: maxM,
+            colorTemperatureMireds: initialMireds,
+            coupleColorTempToLevelMinMireds: minM,
+          };
+          if (dev.lightType === 'extended_color' && dev.xyColor) {
+            endpointConfig.colorControl.currentX = Math.round(dev.xyColor[0] * 65536);
+            endpointConfig.colorControl.currentY = Math.round(dev.xyColor[1] * 65536);
+            endpointConfig.colorControl.colorMode = 1;
+          }
+        }
+
+        const endpoint = await node.add(lightDeviceClass, endpointConfig);
+        endpoints.light = endpoint;
+
+        let updatingFromHA = false;
+        let debounceTimer = null;
+        const pendingPayload = {};
+
+        const sendLightUpdateToHA = (turnOn, data = {}) => {
+          Object.assign(pendingPayload, data);
+          if (!turnOn) {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = null;
+            dev.isOn = false;
+            info.isOn = false;
+            this.haClient.setEntityState(dev.entityId, false);
+            return;
+          }
+
+          dev.isOn = true;
+          info.isOn = true;
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(async () => {
+            debounceTimer = null;
+            const toSend = { ...pendingPayload };
+            for (const k of Object.keys(pendingPayload)) delete pendingPayload[k];
+            console.log(`[Matter Node: ${dev.friendlyName}] Syncing light to HA:`, toSend);
+            await this.haClient.setEntityState(dev.entityId, true, toSend);
+          }, 80);
+        };
+
+        endpoint.events.onOff.events.onOff$Changed.on(async (newValue) => {
+          if (updatingFromHA) return;
+          console.log(`[Matter Node: ${dev.friendlyName}] Light onOff command: ${newValue ? 'ON' : 'OFF'}`);
+          sendLightUpdateToHA(newValue);
+        });
+
+        if (endpoint.events.levelControl?.events?.currentLevel$Changed) {
+          endpoint.events.levelControl.events.currentLevel$Changed.on(async (newLevel) => {
+            if (updatingFromHA || newLevel === null || newLevel === undefined) return;
+            const haBrightness = Math.max(1, Math.min(255, Math.round((newLevel / 254) * 255)));
+            console.log(`[Matter Node: ${dev.friendlyName}] Light brightness command: ${haBrightness}/255 (Matter: ${newLevel})`);
+            dev.brightness = haBrightness;
+            info.brightness = haBrightness;
+            sendLightUpdateToHA(true, { brightness: haBrightness });
+          });
+        }
+
+        if (endpoint.events.colorControl?.events?.colorTemperatureMireds$Changed) {
+          endpoint.events.colorControl.events.colorTemperatureMireds$Changed.on(async (mireds) => {
+            if (updatingFromHA || !mireds) return;
+            console.log(`[Matter Node: ${dev.friendlyName}] Light colorTemp command: ${mireds} mireds`);
+            dev.colorTemp = mireds;
+            info.colorTemp = mireds;
+            sendLightUpdateToHA(true, { color_temp: mireds });
+          });
+        }
+
+        if (endpoint.events.colorControl?.events?.currentX$Changed && endpoint.events.colorControl?.events?.currentY$Changed) {
+          const handleXyChange = () => {
+            if (updatingFromHA) return;
+            const x = endpoint.state.colorControl.currentX / 65536;
+            const y = endpoint.state.colorControl.currentY / 65536;
+            console.log(`[Matter Node: ${dev.friendlyName}] Light xy color command: [${x.toFixed(4)}, ${y.toFixed(4)}]`);
+            dev.xyColor = [x, y];
+            info.xyColor = [x, y];
+            sendLightUpdateToHA(true, { xy_color: [x, y] });
+          };
+          endpoint.events.colorControl.events.currentX$Changed.on(handleXyChange);
+          endpoint.events.colorControl.events.currentY$Changed.on(handleXyChange);
+        }
+
+        updateFromHA = async (newDev) => {
+          updatingFromHA = true;
+          try {
+            if (endpoint.state.onOff.onOff !== newDev.isOn) {
+              await endpoint.set({ onOff: { onOff: newDev.isOn } });
+              info.isOn = newDev.isOn;
+            }
+
+            if (endpoints.light.behaviors.supported.levelControl && newDev.brightness !== null && newDev.brightness !== undefined) {
+              const mLevel = Math.max(1, Math.min(254, Math.round((newDev.brightness / 255) * 254)));
+              if (endpoint.state.levelControl.currentLevel !== mLevel) {
+                await endpoint.set({ levelControl: { currentLevel: mLevel } });
+                info.brightness = newDev.brightness;
+              }
+            }
+
+            if (endpoints.light.behaviors.supported.colorControl) {
+              if (newDev.colorTemp) {
+                const minVal = endpoint.state.colorControl.colorTempPhysicalMinMireds || 153;
+                const maxVal = endpoint.state.colorControl.colorTempPhysicalMaxMireds || 500;
+                const clampedM = Math.max(minVal, Math.min(maxVal, newDev.colorTemp));
+                if (endpoint.state.colorControl.colorTemperatureMireds !== clampedM) {
+                  await endpoint.set({
+                    colorControl: {
+                      colorMode: 2,
+                      colorTemperatureMireds: clampedM,
+                    },
+                  });
+                  info.colorTemp = newDev.colorTemp;
+                }
+              }
+              if (newDev.xyColor && Array.isArray(newDev.xyColor) && newDev.xyColor.length === 2) {
+                const mX = Math.round(newDev.xyColor[0] * 65536);
+                const mY = Math.round(newDev.xyColor[1] * 65536);
+                if (endpoint.state.colorControl.currentX !== mX || endpoint.state.colorControl.currentY !== mY) {
+                  await endpoint.set({
+                    colorControl: {
+                      colorMode: 1,
+                      currentX: mX,
+                      currentY: mY,
+                    },
+                  });
+                  info.xyColor = newDev.xyColor;
+                }
+              }
+            }
+          } finally {
+            updatingFromHA = false;
+          }
+        };
       }
 
       const pairingCodes = node.state.commissioning.pairingCodes || {};
@@ -400,6 +628,7 @@ export class MatterManager {
         entityId: dev.entityId || deviceId,
         friendlyName: dev.friendlyName,
         deviceKind: dev.deviceKind,
+        lightType: dev.lightType || null,
         port,
         discriminator,
         passcode: this.config.passcode,
@@ -408,6 +637,9 @@ export class MatterManager {
         qrCodeDataUrl,
         csaQrUrl: qrPairingCode ? `https://project-chip.github.io/connectedhomeip/qrcode.html?data=${encodeURIComponent(qrPairingCode)}` : '',
         isOn: dev.isOn,
+        brightness: dev.brightness,
+        colorTemp: dev.colorTemp,
+        xyColor: dev.xyColor,
         temperature: dev.temperature,
         humidity: dev.humidity,
         battery: dev.battery,
@@ -464,9 +696,42 @@ export class MatterManager {
     const dev = this.discoveredDevices.get(deviceId);
     if (!dev) return;
 
+    const activeEntry = this.nodes.get(deviceId);
+
+    // Update friendly name if changed in HA
+    const newFriendlyName = change.attributes?.friendly_name;
+    if (newFriendlyName && newFriendlyName !== dev.friendlyName) {
+      dev.friendlyName = newFriendlyName;
+      if (activeEntry) {
+        activeEntry.info.friendlyName = newFriendlyName;
+        try {
+          await activeEntry.node.set({
+            basicInformation: {
+              nodeLabel: newFriendlyName.slice(0, 32),
+              productName: newFriendlyName.slice(0, 32),
+              productLabel: newFriendlyName.slice(0, 64),
+            },
+          });
+        } catch (err) {
+          console.warn(`[Matter Node: ${newFriendlyName}] Could not update basicInformation:`, err.message);
+        }
+      }
+    }
+
     // Update discovered state
     if (dev.deviceKind === 'switch') {
       dev.isOn = change.state;
+    } else if (dev.deviceKind === 'light') {
+      dev.isOn = change.state;
+      if (change.attributes?.brightness !== undefined) {
+        dev.brightness = change.attributes.brightness;
+      }
+      if (change.attributes?.color_temp !== undefined) {
+        dev.colorTemp = change.attributes.color_temp;
+      }
+      if (change.attributes?.xy_color !== undefined) {
+        dev.xyColor = change.attributes.xy_color;
+      }
     } else if (dev.deviceKind === 'sensor') {
       const numVal = parseFloat(change.raw_state);
       if (entity_id === dev.tempEntity) {
@@ -479,7 +744,6 @@ export class MatterManager {
     }
 
     // Update live Matter node if active
-    const activeEntry = this.nodes.get(deviceId);
     if (activeEntry) {
       await activeEntry.updateFromHA(dev);
     }
@@ -504,6 +768,7 @@ export class MatterManager {
           entityId: dev.entityId || deviceId,
           friendlyName: dev.friendlyName,
           deviceKind: dev.deviceKind,
+          lightType: dev.lightType || null,
           port: savedConfig?.port || null,
           discriminator: savedConfig?.discriminator || null,
           passcode: this.config.passcode,
@@ -512,6 +777,9 @@ export class MatterManager {
           qrCodeDataUrl: null,
           csaQrUrl: null,
           isOn: dev.isOn,
+          brightness: dev.brightness,
+          colorTemp: dev.colorTemp,
+          xyColor: dev.xyColor,
           temperature: dev.temperature,
           humidity: dev.humidity,
           battery: dev.battery,
@@ -532,7 +800,7 @@ export class MatterManager {
 
   async toggleFromWeb(deviceId) {
     const dev = this.discoveredDevices.get(deviceId);
-    if (!dev || dev.deviceKind !== 'switch') return false;
+    if (!dev || (dev.deviceKind !== 'switch' && dev.deviceKind !== 'light')) return false;
     const newState = !dev.isOn;
     return await this.haClient.setEntityState(dev.entityId, newState);
   }

@@ -1,7 +1,7 @@
 name: "Matter Multi-Node"
 slug: "matter_multi_node"
-description: "Exposes Home Assistant switches as individual standalone Matter devices to bypass Google Home Matter bridge bugs."
-version: "1.2.0"
+description: "Exposes Home Assistant switches, lights, and sensors as individual standalone Matter devices to bypass Google Home Matter bridge bugs."
+version: "1.3.0"
 startup: "services"
 boot: "auto"
 init: false
@@ -24,6 +24,7 @@ options:
     - switch
     - input_boolean
     - sensor
+    - light
   include_entities: []
   exclude_entities: []
 schema:

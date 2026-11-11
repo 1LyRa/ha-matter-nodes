@@ -30,6 +30,7 @@ const haStatusBadge = document.getElementById('haStatusBadge');
 const nodeCountBadge = document.getElementById('nodeCountBadge');
 const countAll = document.getElementById('countAll');
 const countSwitches = document.getElementById('countSwitches');
+const countLights = document.getElementById('countLights');
 const countSensors = document.getElementById('countSensors');
 const countActive = document.getElementById('countActive');
 const countInactive = document.getElementById('countInactive');
@@ -78,12 +79,14 @@ async function fetchNodes() {
     allDevices = await res.json();
 
     const switchCount = allDevices.filter((d) => d.deviceKind === 'switch').length;
+    const lightCount = allDevices.filter((d) => d.deviceKind === 'light').length;
     const sensorCount = allDevices.filter((d) => d.deviceKind === 'sensor').length;
     const activeCount = allDevices.filter((d) => d.isAnnounced).length;
     const inactiveCount = allDevices.length - activeCount;
 
     countAll.textContent = allDevices.length;
     countSwitches.textContent = switchCount;
+    if (countLights) countLights.textContent = lightCount;
     countSensors.textContent = sensorCount;
     countActive.textContent = activeCount;
     countInactive.textContent = inactiveCount;
@@ -100,6 +103,7 @@ function renderCards() {
   const filtered = allDevices.filter((dev) => {
     // Tab filtering
     if (activeTab === 'switch' && dev.deviceKind !== 'switch') return false;
+    if (activeTab === 'light' && dev.deviceKind !== 'light') return false;
     if (activeTab === 'sensor' && dev.deviceKind !== 'sensor') return false;
     if (activeTab === 'active' && !dev.isAnnounced) return false;
     if (activeTab === 'inactive' && dev.isAnnounced) return false;
@@ -117,7 +121,7 @@ function renderCards() {
       cardsGrid.innerHTML = `
         <div class="empty-state">
           <p>No devices discovered from Home Assistant yet.</p>
-          <p class="subtitle">Ensure you have entities starting with <code>switch.</code>, <code>input_boolean.</code>, or temperature/humidity sensors.</p>
+          <p class="subtitle">Ensure you have entities starting with <code>switch.</code>, <code>light.</code>, <code>input_boolean.</code>, or temperature/humidity sensors.</p>
         </div>`;
     } else {
       cardsGrid.innerHTML = `
@@ -133,6 +137,8 @@ function renderCards() {
 
 function renderCard(dev) {
   const isSwitch = dev.deviceKind === 'switch';
+  const isLight = dev.deviceKind === 'light';
+  const isSensor = dev.deviceKind === 'sensor';
   const isPaired = dev.isCommissioned;
   const statusPill = isPaired
     ? `<span class="pill paired">✓ Paired to Fabric</span>`
@@ -140,19 +146,32 @@ function renderCard(dev) {
     ? `<span class="pill ready">⏳ Ready to Pair</span>`
     : `<span class="pill idle">Dormant</span>`;
 
-  const typePill = isSwitch
-    ? `<span class="pill type-badge">Switch</span>`
-    : `<span class="pill type-badge">Multi-Sensor</span>`;
+  let typePill = '<span class="pill type-badge">Device</span>';
+  if (isSwitch) {
+    typePill = '<span class="pill type-badge">Switch</span>';
+  } else if (isLight) {
+    if (dev.lightType === 'extended_color') {
+      typePill = '<span class="pill type-badge">Color Light</span>';
+    } else if (dev.lightType === 'color_temp') {
+      typePill = '<span class="pill type-badge">White Spectrum Light</span>';
+    } else if (dev.lightType === 'dimmable') {
+      typePill = '<span class="pill type-badge">Dimmable Light</span>';
+    } else {
+      typePill = '<span class="pill type-badge">Light</span>';
+    }
+  } else if (isSensor) {
+    typePill = '<span class="pill type-badge">Multi-Sensor</span>';
+  }
 
   let formattedCode = dev.manualPairingCode || 'N/A';
   if (formattedCode.length === 11) {
     formattedCode = `${formattedCode.slice(0, 4)}-${formattedCode.slice(4, 7)}-${formattedCode.slice(7)}`;
   }
 
-  // Sensor reading block
-  let sensorMetricsHtml = '';
-  if (!isSwitch) {
-    sensorMetricsHtml = `
+  // Metrics block (Sensors & Lights)
+  let metricsHtml = '';
+  if (isSensor) {
+    metricsHtml = `
       <div class="sensor-readings">
         ${
           dev.temperature !== null && dev.temperature !== undefined
@@ -175,6 +194,27 @@ function renderCard(dev) {
             ? `<div class="sensor-metric">
                 <span class="metric-label">Battery</span>
                 <span class="metric-value">🔋 ${dev.battery}%</span>
+              </div>`
+            : ''
+        }
+      </div>
+    `;
+  } else if (isLight && (dev.brightness !== null || dev.colorTemp !== null)) {
+    metricsHtml = `
+      <div class="sensor-readings">
+        ${
+          dev.brightness !== null && dev.brightness !== undefined
+            ? `<div class="sensor-metric">
+                <span class="metric-label">Brightness</span>
+                <span class="metric-value">💡 ${Math.round((dev.brightness / 255) * 100)}%</span>
+              </div>`
+            : ''
+        }
+        ${
+          dev.colorTemp !== null && dev.colorTemp !== undefined
+            ? `<div class="sensor-metric">
+                <span class="metric-label">Color Temp</span>
+                <span class="metric-value">🌡️ ${dev.colorTemp} mireds</span>
               </div>`
             : ''
         }
@@ -205,7 +245,7 @@ function renderCard(dev) {
   } else {
     bodyContent = `
       <div class="unannounced-box">
-        <p>This ${isSwitch ? 'switch' : 'sensor'} is dormant. Announce it to allocate a Matter UDP port and pairing QR code.</p>
+        <p>This ${isSwitch ? 'switch' : isLight ? 'light' : 'sensor'} is dormant. Announce it to allocate a Matter UDP port and pairing QR code.</p>
         <button class="btn-announce" onclick="enableAnnouncement('${escapeHtml(dev.id)}', this)">
           ⚡ Announce as Matter Device
         </button>
@@ -215,7 +255,7 @@ function renderCard(dev) {
 
   // Footer content
   let footerContent = '';
-  if (isSwitch) {
+  if (isSwitch || isLight) {
     footerContent = `
       <div class="state-indicator">
         <span class="state-dot ${dev.isOn ? 'on' : ''}"></span>
@@ -262,7 +302,7 @@ function renderCard(dev) {
         ${statusPill}
       </div>
 
-      ${sensorMetricsHtml}
+      ${metricsHtml}
       ${bodyContent}
 
       <div class="card-footer">

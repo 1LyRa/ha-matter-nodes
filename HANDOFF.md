@@ -2,7 +2,7 @@
 
 **Repository URL**: [https://github.com/1LyRa/ha-matter-nodes](https://github.com/1LyRa/ha-matter-nodes)  
 **Git Branch**: `main`  
-**Current Version**: `1.2.0`  
+**Current Version**: `1.3.0`  
 **Location in Workspace**: `/home/dizir/ha-matter-nodes` (`\\wsl.localhost\Ubuntu\home\dizir\ha-matter-nodes`)
 
 ---
@@ -79,16 +79,25 @@ ha-matter-nodes/
 
 ## 4. Current State & Testing
 
-### What is Completed (v1.2.0)
+### What is Completed (v1.3.0)
 1. **Custom Repository Integration**: Published to `https://github.com/1LyRa/ha-matter-nodes` and verified working in Home Assistant Add-on Store.
-2. **On-Demand Announcement**: Zero mDNS or port allocation on startup until user clicks "Announce as Matter Device".
-3. **Switches & Booleans**: `switch.*`, `input_boolean.*` mapped to Matter `OnOffPlugInUnitDevice` with bidirectional state synchronization.
-4. **Multi-Sensors**:
+2. **Exact Device Naming in Google Home & Apple Home**:
+   - Injects entity friendly names directly into Matter's `BasicInformation` (`nodeLabel`, `productName`, `productLabel`, `vendorName`), preventing generic names ("Switch", "Matter device") during Google Home commissioning.
+   - Automatically propagates friendly name renames in Home Assistant to the live Matter node.
+3. **Lights (`light.*`)**:
+   - Simple lights mapped to `OnOffLightDevice`.
+   - Dimmable lights mapped to `DimmableLightDevice` (with smooth 0–255 to 1–254 brightness sync).
+   - Tunable white lights mapped to `ColorTemperatureLightDevice` (Mireds and Kelvin support).
+   - Color / RGB lights mapped to `ExtendedColorLightDevice` (CIE 1931 XY coordinates).
+   - Real-time debounced updates preventing redundant HA WebSocket calls.
+4. **Switches & Booleans**: `switch.*`, `input_boolean.*` mapped to Matter `OnOffPlugInUnitDevice` with bidirectional state synchronization.
+5. **Multi-Sensors**:
    - Tested and verified with `sensor.living_room_living_room_sensor_new_temperature`, `..._humidity`, and `..._battery`.
    - Maps to `TemperatureSensorDevice` (EP 1) with `PowerSourceServer.with('Battery')` + `HumiditySensorDevice` (EP 2).
    - Real-time updates push temperature (converted to $0.01^\circ\text{C}$), humidity ($0.01\%$), and battery remaining ($0.5\%$ steps) to Matter controllers.
-5. **UI & Themes**: Light, Dark, and Auto theme switcher following Home Assistant design guidelines.
-6. **Supervisor Update Dialog**: Added `CHANGELOG.md` files so version updates show full change notes.
+6. **On-Demand Announcement**: Zero mDNS or port allocation on startup until user clicks "Announce as Matter Device".
+7. **UI & Themes**: Light, Dark, and Auto theme switcher following Home Assistant design guidelines, with filter tabs for All, Switches, Lights, Sensors, Active, and Unannounced.
+8. **Supervisor Update Dialog**: Added `CHANGELOG.md` files so version updates show full change notes.
 
 ---
 
@@ -96,6 +105,6 @@ ha-matter-nodes/
 
 When continuing this project in a new session:
 1. **Covers / Blinds**: Map `cover.*` to Matter `WindowCoveringDevice` (position and open/close tilt).
-2. **Dimmable / Color Lights**: Map `light.*` to `DimmableLightDevice` or `ColorTemperatureLightDevice` (translating 0–255 brightness to 0–254 level, Mireds to Kelvins).
-3. **Thermostats**: Map `climate.*` to `ThermostatDevice` (handling HVAC modes `heat`, `cool`, `auto`, `off`).
+2. **Thermostats**: Map `climate.*` to `ThermostatDevice` (handling HVAC modes `heat`, `cool`, `auto`, `off`).
+3. **GitHub Actions CI / Pre-built Images**: Add a `.github/workflows/build.yaml` to pre-compile Docker images to GitHub Container Registry (`ghcr.io/1LyRa/ha-matter-nodes-{arch}`), reducing add-on installation time in HA from 3 minutes to ~10 seconds.
 4. **GitHub Actions CI / Pre-built Images**: Add a `.github/workflows/build.yaml` to pre-compile Docker images to GitHub Container Registry (`ghcr.io/1LyRa/ha-matter-nodes-{arch}`), reducing add-on installation time in HA from 3 minutes to ~10 seconds.

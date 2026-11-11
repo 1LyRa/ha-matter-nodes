@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0
+
+- **Exact Device Naming in Google Home & Apple Home**: Injects Home Assistant entity friendly names into Matter's `BasicInformation` (`nodeLabel`, `productName`, `productLabel`, `vendorName`) so controllers automatically name devices after HA instead of falling back to generic names.
+- **Dynamic Name Updates**: Automatically updates Matter `nodeLabel` and `productName` if a device's friendly name changes in Home Assistant.
+- **Lights Support**: Full bidirectional support for `light.*` entities:
+  - On/Off Lights (`OnOffLightDevice`)
+  - Dimmable Lights (`DimmableLightDevice` with smooth 0–255 to 1–254 brightness sync)
+  - Color Temperature Lights (`ColorTemperatureLightDevice` with Mireds and Kelvin support)
+  - Full Color Lights (`ExtendedColorLightDevice` with CIE 1931 XY coordinates)
+- **Web Dashboard Lights Tab**: Added "Lights" filter tab and brightness badges in the Ingress interface.
+
 ## 1.2.0
 
 - **Sensors Support**: Added full support for Temperature, Humidity, and Battery sensors.

@@ -1,6 +1,6 @@
 # Matter Multi-Node Home Assistant Add-on
 
-Custom Home Assistant Add-on that exposes your switches and climate sensors as **individual standalone Matter accessories** directly to Google Home, Apple Home, and Alexa—completely bypassing Matter Bridge / Aggregator bugs.
+Custom Home Assistant Add-on that exposes your switches, lights, and climate sensors as **individual standalone Matter accessories** directly to Google Home, Apple Home, and Alexa—completely bypassing Matter Bridge / Aggregator bugs.
 
 ---
 
@@ -8,6 +8,7 @@ Custom Home Assistant Add-on that exposes your switches and climate sensors as *
 Google Home frequently fails or corrupts device states when importing large Matter bridges. By presenting each device as an independent standalone Matter accessory:
 - **No Matter Bridge**: Each device has its own dedicated Matter node without an Aggregator endpoint.
 - **Dedicated Port**: Dynamically allocates sequential UDP ports starting at `5541` (leaving `5540` untouched for existing Matter servers).
+- **Exact Device Naming**: Injects Home Assistant entity friendly names into Matter's `BasicInformation` (`nodeLabel`, `productName`, and `vendorName`) so Google Home and Apple Home pre-fill the exact HA name automatically.
 - **Dormant by Default**: Discovers devices automatically, but only announces and generates QR codes for devices you explicitly choose.
 - **Smart Sensor Grouping**: Groups multi-sensor devices (Temperature + Humidity + Battery) into a single Matter device with one QR code.
 
@@ -15,6 +16,11 @@ Google Home frequently fails or corrupts device states when importing large Matt
 
 ## Supported Devices
 
+- **Lights**: `light.*`
+  - Simple Lights (Matter `OnOffLight`)
+  - Dimmable Lights (Matter `DimmableLight`, 0–255 to 1–254 level translation)
+  - Color Temperature Lights (Matter `ColorTemperatureLight`, Mireds / Kelvin support)
+  - Full Color RGB / Spectrum Lights (Matter `ExtendedColorLight`, CIE 1931 XY coordinates)
 - **Switches & Booleans**: `switch.*`, `input_boolean.*` (Matter `OnOffPlugInUnit`)
 - **Temperature Sensors**: `sensor.*_temperature` (Matter `TemperatureSensor`, supports °C and °F)
 - **Humidity Sensors**: `sensor.*_humidity` (Matter `HumiditySensor`)

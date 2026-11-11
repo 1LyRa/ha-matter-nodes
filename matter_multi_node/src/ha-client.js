@@ -182,20 +182,24 @@ export class HAClient extends EventEmitter {
     });
   }
 
-  async setEntityState(entityId, turnOn) {
+  async setEntityState(entityId, turnOn, serviceData = {}) {
     const domain = entityId.split('.')[0];
     const service = turnOn ? 'turn_on' : 'turn_off';
 
-    console.log(`[HA Client] Calling service ${domain}.${service} for ${entityId}`);
+    console.log(`[HA Client] Calling service ${domain}.${service} for ${entityId}`, Object.keys(serviceData).length ? serviceData : '');
     try {
-      await this.sendRequest({
+      const payload = {
         type: 'call_service',
         domain: domain,
         service: service,
         target: {
           entity_id: entityId,
         },
-      });
+      };
+      if (turnOn && Object.keys(serviceData).length > 0) {
+        payload.service_data = serviceData;
+      }
+      await this.sendRequest(payload);
       return true;
     } catch (err) {
       console.error(`[HA Client] Failed to call ${domain}.${service} on ${entityId}:`, err.message);
