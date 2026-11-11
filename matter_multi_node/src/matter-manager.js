@@ -111,25 +111,22 @@ function haFanModeToMatter(mode) {
   return FanControl.FanMode.On;
 }
 
-function matterFanModeToHa(matterMode, supportedModes = []) {
-  if (!supportedModes || supportedModes.length === 0) return 'auto';
-  const lower = supportedModes.map((m) => ({ orig: m, low: String(m).toLowerCase() }));
-  const findMatch = (pattern) => lower.find((item) => item.low.includes(pattern))?.orig;
+function sortFanSpeeds(modes) {
+  const rank = (mode) => {
+    const m = String(mode).toLowerCase().replace(/[-_]/g, ' ').trim();
+    if (m === 'off') return 0;
+    if (m.includes('mute') || m.includes('silent') || m.includes('quiet') || m.includes('whisper') || m.includes('sleep') || m.includes('night') || m.includes('eco')) return 10;
+    if (m.includes('mid low') || m.includes('medium low') || m.includes('low mid') || m.includes('low medium') || m === '2') return 30;
+    if (m.includes('low') || m.includes('min') || m === '1') return 20;
+    if (m.includes('mid high') || m.includes('medium high') || m.includes('high mid') || m.includes('high medium') || m === '4') return 50;
+    if (m.includes('mid') || m.includes('med') || m.includes('normal') || m.includes('standard') || m === '3') return 40;
+    if (m.includes('turbo') || m.includes('boost') || m.includes('strong') || m.includes('full') || m.includes('max') || m === '6') return 70;
+    if (m.includes('high') || m === '5') return 60;
+    if (m.includes('auto')) return 100;
+    return 45;
+  };
 
-  switch (matterMode) {
-    case FanControl.FanMode.Off:
-      return findMatch('off') || null;
-    case FanControl.FanMode.Low:
-      return findMatch('low') || findMatch('1') || findMatch('quiet') || findMatch('min') || supportedModes[0];
-    case FanControl.FanMode.Medium:
-      return findMatch('med') || findMatch('mid') || findMatch('2') || supportedModes[1] || supportedModes[0];
-    case FanControl.FanMode.High:
-      return findMatch('high') || findMatch('3') || findMatch('turbo') || findMatch('max') || supportedModes[supportedModes.length - 1];
-    case FanControl.FanMode.Auto:
-      return findMatch('auto') || 'auto';
-    default:
-      return supportedModes[0] || 'auto';
-  }
+  return [...modes].sort((a, b) => rank(a) - rank(b));
 }
 
 function haFanModesToSpeeds(modes = []) {
@@ -137,7 +134,29 @@ function haFanModesToSpeeds(modes = []) {
     const l = String(m).toLowerCase();
     return l !== 'off' && l !== 'auto';
   });
-  return speeds.length > 0 ? speeds : ['low', 'medium', 'high'];
+  if (speeds.length === 0) return ['low', 'medium', 'high'];
+  return sortFanSpeeds(speeds);
+}
+
+function matterFanModeToHa(matterMode, supportedModes = []) {
+  if (!supportedModes || supportedModes.length === 0) return 'auto';
+  const speeds = haFanModesToSpeeds(supportedModes);
+  const findMatch = (pattern) => speeds.find((item) => String(item).toLowerCase().includes(pattern));
+
+  switch (matterMode) {
+    case FanControl.FanMode.Off:
+      return supportedModes.find((m) => String(m).toLowerCase() === 'off') || null;
+    case FanControl.FanMode.Low:
+      return findMatch('low') || findMatch('1') || findMatch('quiet') || findMatch('mute') || findMatch('min') || speeds[0];
+    case FanControl.FanMode.Medium:
+      return findMatch('med') || findMatch('mid') || findMatch('2') || speeds[Math.floor(speeds.length / 2)] || speeds[0];
+    case FanControl.FanMode.High:
+      return findMatch('high') || findMatch('3') || findMatch('turbo') || findMatch('max') || speeds[speeds.length - 1];
+    case FanControl.FanMode.Auto:
+      return supportedModes.find((m) => String(m).toLowerCase() === 'auto') || 'auto';
+    default:
+      return speeds[0] || 'auto';
+  }
 }
 
 function haFanModeToPercent(mode, supportedModes = []) {
@@ -1129,7 +1148,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.5.9',
+          softwareVersionString: '1.6.0',
         },
       });
 
@@ -1140,7 +1159,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.5.9',
+            softwareVersionString: '1.6.0',
           },
         });
       } catch (err) {

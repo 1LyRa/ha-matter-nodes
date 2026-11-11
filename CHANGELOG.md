@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.0
+
+- **Logical Fan Speed Sorting**: Fixed fan speed percentage mapping for ACs and fan entities whose Home Assistant options are in alphabetical order (e.g. `["High", "Low", "Mid", "Mid High", "Mid Low", "Mute", "Turbo"]`). Speeds are now ranked and sorted logically from quietest to fastest (`Mute` $\rightarrow$ `Low` $\rightarrow$ `Mid Low` $\rightarrow$ `Mid` $\rightarrow$ `Mid High` $\rightarrow$ `High` $\rightarrow$ `Turbo`), preventing low percentages from setting High and high percentages from setting Mute.
+
 ## 1.5.9
 
 - **Multi-Channel Light Grouping**: Automatically detects multi-gang wall switches and multi-channel light fixtures (e.g. Aqara Smart Wall Switch Light 1 & Light 2, RFSAI dual lights) and groups them into a single physical Matter device with independent Matter endpoints.
