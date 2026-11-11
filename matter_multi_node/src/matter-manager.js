@@ -262,7 +262,7 @@ function getSensorBaseId(entityId) {
 }
 
 function cleanDeviceFriendlyName(name, deviceName) {
-  let str = (deviceName && deviceName.trim()) ? deviceName.trim() : (name || '').trim();
+  let str = (name && name.trim()) ? name.trim() : (deviceName || '').trim();
   if (!str) return '';
   // Strip trailing raw power / raw_power
   str = str.replace(/\s*[-–—:]?\s*\braw\s*power\b/gi, '').trim();
@@ -290,11 +290,6 @@ function extractSensorBaseFriendly(rawFriendly, deviceName) {
 
 function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, haClient) {
   if (!entityId) return false;
-
-  // Fountains and pumps are primary devices, never hide them as child entities
-  if (isFountainOrPump(entityId, stateObj)) {
-    return false;
-  }
 
   const domain = entityId.split('.')[0];
   const baseName = entityId.split('.')[1] || '';
@@ -438,6 +433,18 @@ function findParentDeviceId(entityId, regEntry, allStatesMap, haClient) {
       const candidate = `${d}.${stripped}`;
       if (allStatesMap && allStatesMap.has(candidate)) {
         return candidate;
+      }
+    }
+  }
+
+  // 3. Prefix matching heuristic (e.g. bedroom_fountain_new_bedroom_fountain_raw_power -> switch.bedroom_fountain)
+  if (allStatesMap) {
+    for (const candidate of allStatesMap.keys()) {
+      if (candidate !== entityId) {
+        const candBase = candidate.split('.')[1] || '';
+        if (candBase && baseName.startsWith(candBase) && (baseName.includes('raw_power') || baseName.includes('child_lock'))) {
+          return candidate;
+        }
       }
     }
   }
@@ -1178,7 +1185,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.6.1',
+          softwareVersionString: '1.6.2',
         },
       });
 
@@ -1189,7 +1196,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.6.1',
+            softwareVersionString: '1.6.2',
           },
         });
       } catch (err) {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.2
+
+- **Fountain Raw Power Deduplication**: Removed blanket child-exemption for fountains, ensuring raw power auxiliary switches (such as `switch.bedroom_fountain_new_bedroom_fountain_raw_power` and `switch.living_room_fountain_new_living_room_fountain_raw_power`) are recognized as secondary child switches and mapped to their primary parent (`switch.bedroom_fountain` / `switch.living_room_fountain`). Only the clean, primary fountain switch is exposed as a Matter device.
+- **Entity Friendly Name Priority**: Prioritized user-defined entity friendly names over generic hardware model names from the HA Device Registry (e.g. restoring "Bathroom light" instead of "Home Relay 16A Thread").
+
 ## 1.6.1
 
 - **Centered 50% Auto Fan Mode**: Mapped `Auto` fan mode directly to 50% on the Matter fan percentage slider. When Google Home sets the fan slider to ~50% (45%–55%), the backend switches the AC fan mode to `Auto`. When Home Assistant is in `Auto` mode, the Matter FanControl cluster updates `percentSetting` / `percentCurrent` to 50%, centering Google Home's fan slider on Auto while distributing discrete manual speeds evenly below and above 50% (`Mute` $\rightarrow$ `Low` $\rightarrow$ `Mid Low` $\rightarrow$ **`Auto (50%)`** $\rightarrow$ `Mid` $\rightarrow$ `Mid High` $\rightarrow$ `High` $\rightarrow$ `Turbo`).
