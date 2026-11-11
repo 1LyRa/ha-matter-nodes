@@ -1,6 +1,6 @@
 {
   "name": "ha-matter-nodes",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "description": "Expose Home Assistant entities as individual standalone Matter nodes for Google Home (non-bridge)",
   "type": "module",
   "main": "src/index.js",

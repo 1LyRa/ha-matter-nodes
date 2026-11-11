@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.6
+
+- **Matter Pump Device (`0x0303`) for Fountains & Water Pumps**: Automatically detects fountain and pump entities (`switch.bedroom_fountain`, `switch.living_room_fountain`, switches with `device_class: pump`, or entities matching fountain/pump/насос/фонтан) and exposes them to Matter as dedicated `PumpDevice` nodes with `PumpConfigurationAndControlServer` (ConstantSpeed feature) and `OnOffServer`. In Google Home, they appear as dedicated water pumps with active power toggles instead of generic switches or plugs.
+- **Dual-Layer AC Fan Speed in Google Home**: Added `FanControlServer` (MultiSpeed + Auto) directly to Endpoint 1 (`ThermostatDevice`) in addition to Endpoint 2 (`FanDevice`). Ensures fan speed percentage, steps, and Auto/Low/Medium/High modes appear natively across Google Home ecosystem surfaces regardless of whether Google Home expects fan control on the primary thermostat cluster or as a composed endpoint.
+- **Robust Physical Device Grouping**: Integrated Home Assistant Device Registry (`config/device_registry/list`) with elevated Supervisor permissions (`hassio_role: "manager"`, `hassio_api: true`) and cross-domain heuristic fallback (`sensor` & `binary_sensor`). Multi-sensor devices (such as Aqara FP300 presence sensors) roll all child entities (occupancy, temperature, humidity, illuminance, battery) into a single physical device card ("Bathroom presence sensor") by default.
+- **Fountain & Pump Dashboard Badges**: Added visual `🌊 Fountain / Pump` pill badges and styling in the web UI dashboard with power toggle support.
+
 ## 1.5.5
 
 - **Physical Multi-Sensor Grouping (Instance `_2`, `_3` Suffix Support)**: Fixed sensor base ID matching to support instance numbering (e.g. `sensor.presence_multi_sensor_fp300_temperature_2`, `_humidity_2`, `_battery_2`). Sub-sensors now properly group into their composite physical device ("Bathroom presence sensor") rather than splitting into separate orphan sensor cards.

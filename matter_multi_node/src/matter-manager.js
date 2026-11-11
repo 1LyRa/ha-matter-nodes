@@ -9,16 +9,35 @@ import {
   ExtendedColorLightDevice,
   ThermostatDevice,
   FanDevice,
+  PumpDevice,
 } from '@matter/main/devices';
 import { PowerSourceServer } from '@matter/main/behaviors/power-source';
 import { OnOffServer } from '@matter/main/behaviors/on-off';
 import { FanControlServer } from '@matter/main/behaviors/fan-control';
 import { ThermostatServer } from '@matter/main/behaviors/thermostat';
 import { ThermostatUserInterfaceConfigurationServer } from '@matter/main/behaviors/thermostat-user-interface-configuration';
-import { Thermostat, FanControl } from '@matter/main/clusters';
+import { PumpConfigurationAndControlServer } from '@matter/main/behaviors/pump-configuration-and-control';
+import { Thermostat, FanControl, PumpConfigurationAndControl } from '@matter/main/clusters';
 import QRCode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
+
+function isFountainOrPump(entityId, stateObj) {
+  const lowerId = (entityId || '').toLowerCase();
+  const lowerName = (stateObj?.attributes?.friendly_name || '').toLowerCase();
+  const deviceClass = stateObj?.attributes?.device_class || '';
+
+  const knownFountains = ['switch.bedroom_fountain', 'switch.living_room_fountain'];
+  if (knownFountains.includes(lowerId)) return true;
+
+  if (deviceClass === 'pump') return true;
+
+  const patterns = ['fountain', 'pump', 'фонтан', 'насос', 'помпа'];
+  if (patterns.some((p) => lowerId.includes(p) || lowerName.includes(p))) {
+    return true;
+  }
+  return false;
+}
 
 function convertTemperatureToMatter(value, unit) {
   if (value === null || value === undefined || isNaN(value)) return null;
@@ -183,10 +202,12 @@ function convertBatteryToMatter(value) {
 }
 
 function getSensorBaseId(entityId) {
-  // Strip sensor role keyword and preserve any numeric instance suffix
+  // Strip sensor role keywords and preserve any numeric instance suffix
   // e.g. sensor.presence_multi_sensor_fp300_temperature_2 -> sensor.presence_multi_sensor_fp300_2
+  // binary_sensor.presence_multi_sensor_fp300_occupancy_2 -> sensor.presence_multi_sensor_fp300_2
   // sensor.presence_multi_sensor_fp300_humidity -> sensor.presence_multi_sensor_fp300
-  return entityId.replace(/_(?:temperature|temp|humidity|humid|battery|bat)(?:_(\d+))?$/i, (match, num) => {
+  const normalized = entityId.replace(/^(?:binary_sensor|sensor)\./i, 'sensor.');
+  return normalized.replace(/_(?:temperature|temp|humidity|humid|battery|bat|battery_level|battery_voltage|battery_type|illuminance|illum|occupancy|motion|presence|power|energy|voltage|current)(?:_(\d+))?$/i, (match, num) => {
     return num ? `_${num}` : '';
   });
 }
@@ -195,7 +216,7 @@ function extractSensorBaseFriendly(rawFriendly) {
   if (!rawFriendly) return '';
   return rawFriendly
     .trim()
-    .replace(/\s*[-–—:]?\s*(?:Temperature|Humidity|Battery|Battery Level|temp|humid|bat)(?:\s+\d+)?$/i, '')
+    .replace(/\s*[-–—:]?\s*(?:Temperature|Humidity|Battery|Battery Level|Battery Voltage|Battery Type|Illuminance|Occupancy|Motion|Presence|Power|Energy|Voltage|Current|temp|humid|bat)(?:\s+\d+)?$/i, '')
     .trim();
 }
 
@@ -315,15 +336,16 @@ export class MatterManager {
         primaryBaseIds.add(baseName);
       }
 
-      // 1. Process Switches & Input Booleans
+      // 1. Process Switches & Input Booleans (including Fountains / Pumps)
       if (domain === 'switch' || domain === 'input_boolean') {
         const friendlyName = stateObj.attributes?.friendly_name || entityId;
         const isOn = stateObj.state === 'on';
+        const isPump = isFountainOrPump(entityId, stateObj);
 
         this.discoveredDevices.set(entityId, {
           id: entityId,
           domain,
-          deviceKind: 'switch',
+          deviceKind: isPump ? 'pump' : 'switch',
           friendlyName,
           isOn,
           entityId,
@@ -398,14 +420,12 @@ export class MatterManager {
         const hasCool = supportedModes.includes('cool');
         const hasHeat = supportedModes.includes('heat');
         const hasAuto = supportedModes.includes('auto') || supportedModes.includes('heat_cool');
-        const supportedFeatures = Number(stateObj.attributes?.supported_features || 0);
         const rawFanModes = Array.isArray(stateObj.attributes?.fan_modes) ? stateObj.attributes.fan_modes : [];
         const fanMode = stateObj.attributes?.fan_mode || null;
-        // In Home Assistant, ClimateEntityFeature.FAN_MODE = 8
-        const supportsFan = (supportedFeatures & 8) !== 0 || fanMode !== null || rawFanModes.length > 0;
+        // Always provide fan modes for AC/Thermostat to enable full Google Home fan control
         const fanModes = rawFanModes.length > 0
           ? rawFanModes
-          : (supportsFan ? ['auto', 'low', 'medium', 'high'] : []);
+          : ['auto', 'low', 'medium', 'high'];
 
         const currentTemp = stateObj.attributes?.current_temperature ?? null;
         const targetTemp = stateObj.attributes?.temperature ?? null;
@@ -444,22 +464,29 @@ export class MatterManager {
         this.entityToDeviceId.set(entityId, entityId);
       }
 
-      // 4. Collect Candidate Sensors (Temperature, Humidity, Battery)
-      if (domain === 'sensor') {
+      // 4. Collect Candidate Sensors (Temperature, Humidity, Battery, Occupancy, Illuminance)
+      if (domain === 'sensor' || domain === 'binary_sensor') {
         const deviceClass = stateObj.attributes?.device_class;
         const unit = stateObj.attributes?.unit_of_measurement;
         const isTemp = deviceClass === 'temperature' || /_(temperature|temp)(?:_\d+)?$/i.test(entityId);
         const isHumid = deviceClass === 'humidity' || /_(humidity|humid)(?:_\d+)?$/i.test(entityId);
         const isBat = (deviceClass === 'battery' || /_(battery|bat)(?:_\d+)?$/i.test(entityId)) && !/voltage/i.test(entityId);
+        const isIllum = deviceClass === 'illuminance' || /illuminance/i.test(entityId);
+        const isOcc = deviceClass === 'occupancy' || deviceClass === 'motion' || deviceClass === 'presence' || /occupancy|motion|presence/i.test(entityId);
 
-        if (isTemp || isHumid || isBat) {
-          rawSensors.push({
-            entityId,
-            stateObj,
-            role: isTemp ? 'temperature' : isHumid ? 'humidity' : 'battery',
-            unit,
-          });
-        }
+        let role = 'other';
+        if (isTemp) role = 'temperature';
+        else if (isHumid) role = 'humidity';
+        else if (isBat) role = 'battery';
+        else if (isIllum) role = 'illuminance';
+        else if (isOcc) role = 'occupancy';
+
+        rawSensors.push({
+          entityId,
+          stateObj,
+          role,
+          unit,
+        });
       }
     }
 
@@ -470,33 +497,47 @@ export class MatterManager {
       const regEntry = this.haClient?.entityRegistry?.get(s.entityId);
       const devReg = regEntry?.device_id ? this.haClient?.deviceRegistry?.get(regEntry.device_id) : null;
 
-      const baseId = getSensorBaseId(s.entityId);
+      // Group key: Prefer HA device_id if available, otherwise heuristic base ID
+      const baseId = regEntry?.device_id ? `device_${regEntry.device_id}` : getSensorBaseId(s.entityId);
       const fallbackFriendly = extractSensorBaseFriendly(s.stateObj.attributes?.friendly_name || s.entityId);
       const deviceName = devReg?.name_by_user || devReg?.name || fallbackFriendly;
 
       // Check if this sensor belongs to an existing primary device (switch, light, climate)
-      const rawBaseName = s.entityId.split('.')[1]?.replace(/_(?:temperature|temp|humidity|humid|battery|bat)(?:_\d+)?$/i, '');
-      const belongsToPrimary = (regEntry?.device_id && primaryDeviceIds.has(regEntry.device_id)) ||
-        primaryBaseIds.has(rawBaseName);
+      const rawBaseName = s.entityId.split('.')[1]?.replace(/_(?:temperature|temp|humidity|humid|battery|bat|illuminance|occupancy|motion|presence|power|energy|voltage|current)(?:_\d+)?$/i, '');
+      const belongsToPrimary = Boolean(
+        (regEntry?.device_id && primaryDeviceIds.has(regEntry.device_id)) ||
+        primaryBaseIds.has(rawBaseName)
+      );
 
       if (!groupedSensors.has(baseId)) {
         groupedSensors.set(baseId, {
           baseId,
+          deviceId: regEntry?.device_id || null,
           friendlyName: deviceName || baseId,
           temp: null,
           humid: null,
           bat: null,
+          illum: null,
+          occ: null,
+          allEntities: [],
           belongsToPrimary,
         });
       }
 
       const group = groupedSensors.get(baseId);
-      if (s.role === 'temperature') {
+      group.allEntities.push(s.entityId);
+      if (belongsToPrimary) group.belongsToPrimary = true;
+
+      if (s.role === 'temperature' && !group.temp) {
         group.temp = s;
-      } else if (s.role === 'humidity') {
+      } else if (s.role === 'humidity' && !group.humid) {
         group.humid = s;
-      } else if (s.role === 'battery') {
+      } else if (s.role === 'battery' && !group.bat) {
         group.bat = s;
+      } else if (s.role === 'illuminance' && !group.illum) {
+        group.illum = s;
+      } else if (s.role === 'occupancy' && !group.occ) {
+        group.occ = s;
       }
     }
 
@@ -507,22 +548,28 @@ export class MatterManager {
         continue;
       }
 
-      // Must have at least a temperature or humidity sensor (or battery when showing all)
-      if (!group.temp && !group.humid && !this.showAllSensors) continue;
+      // Must have at least a temperature, humidity, battery or occupancy sensor (or when showing all)
+      if (!group.temp && !group.humid && !group.occ && !group.bat && !this.showAllSensors) {
+        continue;
+      }
 
-      const isMulti = (group.temp && group.humid) || (group.temp && group.bat) || (group.humid && group.bat);
-      const friendlyName = isMulti
-        ? group.friendlyName
-        : (group.temp?.stateObj.attributes?.friendly_name || group.humid?.stateObj.attributes?.friendly_name || group.friendlyName);
+      const isMulti = Boolean(
+        (group.temp && (group.humid || group.bat || group.occ)) ||
+        (group.humid && (group.bat || group.occ))
+      );
+
+      const representativeEntityId = group.temp?.entityId || group.humid?.entityId || group.occ?.entityId || group.bat?.entityId || group.allEntities[0] || baseId;
 
       const deviceObj = {
         id: baseId,
+        entityId: representativeEntityId,
         domain: 'sensor',
         deviceKind: 'sensor',
-        friendlyName,
+        friendlyName: group.friendlyName,
         tempEntity: group.temp?.entityId || null,
         humidEntity: group.humid?.entityId || null,
         batEntity: group.bat?.entityId || null,
+        occEntity: group.occ?.entityId || null,
         temperature: group.temp ? parseFloat(group.temp.stateObj.state) : null,
         humidity: group.humid ? parseFloat(group.humid.stateObj.state) : null,
         battery: group.bat ? parseFloat(group.bat.stateObj.state) : null,
@@ -533,9 +580,9 @@ export class MatterManager {
 
       this.discoveredDevices.set(baseId, deviceObj);
 
-      if (group.temp) this.entityToDeviceId.set(group.temp.entityId, baseId);
-      if (group.humid) this.entityToDeviceId.set(group.humid.entityId, baseId);
-      if (group.bat) this.entityToDeviceId.set(group.bat.entityId, baseId);
+      for (const entId of group.allEntities) {
+        this.entityToDeviceId.set(entId, baseId);
+      }
     }
 
     // If showAllSensors is enabled, expose every raw sub-sensor entity individually as well
@@ -605,7 +652,9 @@ export class MatterManager {
       let primaryDeviceType;
       let lightDeviceClass = null;
 
-      if (dev.deviceKind === 'switch') {
+      if (dev.deviceKind === 'pump') {
+        primaryDeviceType = PumpDevice.deviceType;
+      } else if (dev.deviceKind === 'switch') {
         primaryDeviceType = OnOffPlugInUnitDevice.deviceType;
       } else if (dev.deviceKind === 'light') {
         if (dev.lightType === 'extended_color') {
@@ -651,7 +700,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.5.5',
+          softwareVersionString: '1.5.6',
         },
       });
 
@@ -662,7 +711,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.5.5',
+            softwareVersionString: '1.5.6',
           },
         });
       } catch (err) {
@@ -673,22 +722,45 @@ export class MatterManager {
       let updateFromHA = async () => {};
 
       // Build endpoints depending on deviceKind
-      if (dev.deviceKind === 'switch') {
-        const endpoint = await node.add(OnOffPlugInUnitDevice, { id: 'switch' });
-        endpoints.switch = endpoint;
-
-        if (dev.isOn) {
-          await endpoint.set({ onOff: { onOff: true } });
+      if (dev.deviceKind === 'switch' || dev.deviceKind === 'pump') {
+        let endpoint;
+        if (dev.deviceKind === 'pump') {
+          const PumpClass = PumpDevice.with(
+            OnOffServer,
+            PumpConfigurationAndControlServer.with(PumpConfigurationAndControl.Feature.ConstantSpeed)
+          );
+          endpoint = await node.add(PumpClass, {
+            id: 'pump',
+            onOff: { onOff: dev.isOn },
+            pumpConfigurationAndControl: {
+              operationMode: PumpConfigurationAndControl.OperationMode.Normal,
+              effectiveOperationMode: PumpConfigurationAndControl.OperationMode.Normal,
+              controlMode: PumpConfigurationAndControl.ControlMode.ConstantSpeed,
+              effectiveControlMode: PumpConfigurationAndControl.ControlMode.ConstantSpeed,
+              maxSpeed: 1000,
+              currentSpeed: 1000,
+            },
+          });
+          endpoints.pump = endpoint;
+        } else {
+          endpoint = await node.add(OnOffPlugInUnitDevice, { id: 'switch' });
+          endpoints.switch = endpoint;
+          if (dev.isOn) {
+            await endpoint.set({ onOff: { onOff: true } });
+          }
         }
 
         let updatingFromHA = false;
-        endpoint.events.onOff.events.onOff$Changed.on(async (newValue) => {
-          if (updatingFromHA) return;
-          console.log(`[Matter Node: ${dev.friendlyName}] Received command: ${newValue ? 'ON' : 'OFF'}`);
-          dev.isOn = newValue;
-          info.isOn = newValue;
-          await this.haClient.setEntityState(dev.entityId, newValue);
-        });
+        const onOffEvent = endpoint.events.onOff.onOff$Changed || endpoint.events.onOff.events?.onOff$Changed;
+        if (onOffEvent) {
+          onOffEvent.on(async (newValue) => {
+            if (updatingFromHA) return;
+            console.log(`[Matter Node: ${dev.friendlyName}] Received command: ${newValue ? 'ON' : 'OFF'}`);
+            dev.isOn = newValue;
+            if (typeof info !== 'undefined' && info) info.isOn = newValue;
+            await this.haClient.setEntityState(dev.entityId, newValue);
+          });
+        }
 
         updateFromHA = async (newDev) => {
           if (endpoint.state.onOff.onOff !== newDev.isOn) {
@@ -834,11 +906,14 @@ export class MatterManager {
           }, 80);
         };
 
-        endpoint.events.onOff.events.onOff$Changed.on(async (newValue) => {
-          if (updatingFromHA) return;
-          console.log(`[Matter Node: ${dev.friendlyName}] Light onOff command: ${newValue ? 'ON' : 'OFF'}`);
-          sendLightUpdateToHA(newValue);
-        });
+        const lightOnOffEvent = endpoint.events.onOff.onOff$Changed || endpoint.events.onOff.events?.onOff$Changed;
+        if (lightOnOffEvent) {
+          lightOnOffEvent.on(async (newValue) => {
+            if (updatingFromHA) return;
+            console.log(`[Matter Node: ${dev.friendlyName}] Light onOff command: ${newValue ? 'ON' : 'OFF'}`);
+            sendLightUpdateToHA(newValue);
+          });
+        }
 
         if (endpoint.events.levelControl?.events?.currentLevel$Changed) {
           endpoint.events.levelControl.events.currentLevel$Changed.on(async (newLevel) => {
@@ -933,10 +1008,17 @@ export class MatterManager {
         if (dev.hasAuto) features.push(Thermostat.Feature.AutoMode);
 
         const hasFanControl = Array.isArray(dev.fanModes) && dev.fanModes.length > 0;
+        const fanSeq = haFanModesToMatterSequence(dev.fanModes);
+        const currentFM = haFanModeToMatter(dev.fanMode);
+        const currentPct = haFanModeToPercent(dev.fanMode, dev.fanModes);
+        const speedMax = Math.max(1, haFanModesToSpeeds(dev.fanModes).length);
+        const currentSpd = haFanModeToSpeed(dev.fanMode, dev.fanModes);
+
         const ThermostatClass = ThermostatDevice.with(
           ThermostatServer.with(...features),
           ThermostatUserInterfaceConfigurationServer,
-          OnOffServer
+          OnOffServer,
+          FanControlServer.with(FanControl.Feature.MultiSpeed, FanControl.Feature.Auto)
         );
 
         const localTemp = convertTemperatureToMatter(dev.currentTemp, dev.tempUnit) ?? 2100;
@@ -995,38 +1077,38 @@ export class MatterManager {
           onOff: {
             onOff: dev.isOn,
           },
+          fanControl: {
+            fanMode: currentFM,
+            fanModeSequence: fanSeq,
+            percentSetting: currentPct,
+            percentCurrent: currentPct,
+            speedMax: speedMax,
+            speedSetting: currentSpd,
+            speedCurrent: currentSpd,
+          },
         };
 
         const endpoint = await node.add(ThermostatClass, endpointConfig);
         endpoints.thermostat = endpoint;
 
-        let fanEndpoint = null;
-        if (hasFanControl) {
-          const fanSeq = haFanModesToMatterSequence(dev.fanModes);
-          const currentFM = haFanModeToMatter(dev.fanMode);
-          const currentPct = haFanModeToPercent(dev.fanMode, dev.fanModes);
-          const speedMax = Math.max(1, haFanModesToSpeeds(dev.fanModes).length);
-          const currentSpd = haFanModeToSpeed(dev.fanMode, dev.fanModes);
+        // Also add composed FanDevice on Endpoint 2 for controllers expecting a child fan endpoint
+        const FanClass = FanDevice.with(
+          FanControlServer.with(FanControl.Feature.MultiSpeed, FanControl.Feature.Auto)
+        );
 
-          const FanClass = FanDevice.with(
-            FanControlServer.with(FanControl.Feature.MultiSpeed, FanControl.Feature.Auto)
-          );
-
-          fanEndpoint = await node.add(FanClass, {
-            id: 'fan',
-            fanControl: {
-              fanMode: currentFM,
-              fanModeSequence: fanSeq,
-              percentSetting: currentPct,
-              percentCurrent: currentPct,
-              speedMax: speedMax,
-              speedSetting: currentSpd,
-              speedCurrent: currentSpd,
-            },
-          });
-          endpoints.fan = fanEndpoint;
-        }
-        endpoints.thermostat = endpoint;
+        const fanEndpoint = await node.add(FanClass, {
+          id: 'fan',
+          fanControl: {
+            fanMode: currentFM,
+            fanModeSequence: fanSeq,
+            percentSetting: currentPct,
+            percentCurrent: currentPct,
+            speedMax: speedMax,
+            speedSetting: currentSpd,
+            speedCurrent: currentSpd,
+          },
+        });
+        endpoints.fan = fanEndpoint;
 
         let updatingFromHA = false;
         let tempDebounceTimer = null;
@@ -1099,11 +1181,14 @@ export class MatterManager {
           });
         }
 
-        // Fan Speed & Fan Mode for Google Home (Composed Fan Device)
-        if (fanEndpoint && fanEndpoint.events.fanControl) {
-          let fanDebounceTimer = null;
+        // Fan Speed & Fan Mode for Google Home (Active on both Endpoint 1 & Endpoint 2)
+        let fanDebounceTimer = null;
+        const fanSources = [endpoint, fanEndpoint].filter(Boolean);
 
-          const fanModeEvent = fanEndpoint.events.fanControl.events?.fanMode$Changed || fanEndpoint.events.fanControl.events?.fanMode$Changing;
+        for (const fEp of fanSources) {
+          if (!fEp.events?.fanControl) continue;
+
+          const fanModeEvent = fEp.events.fanControl.events?.fanMode$Changed || fEp.events.fanControl.events?.fanMode$Changing;
           if (fanModeEvent) {
             fanModeEvent.on(async (newMode) => {
               if (updatingFromHA) return;
@@ -1130,12 +1215,12 @@ export class MatterManager {
             }, 100);
           };
 
-          const pctEvent = fanEndpoint.events.fanControl.events?.percentSetting$Changing || fanEndpoint.events.fanControl.events?.percentSetting$Changed;
+          const pctEvent = fEp.events.fanControl.events?.percentSetting$Changing || fEp.events.fanControl.events?.percentSetting$Changed;
           if (pctEvent) {
             pctEvent.on(handleSpeedPercentChange);
           }
 
-          const spdEvent = fanEndpoint.events.fanControl.events?.speedSetting$Changing || fanEndpoint.events.fanControl.events?.speedSetting$Changed;
+          const spdEvent = fEp.events.fanControl.events?.speedSetting$Changing || fEp.events.fanControl.events?.speedSetting$Changed;
           if (spdEvent) {
             spdEvent.on((spd) => {
               if (updatingFromHA || spd === null || spd === undefined) return;
@@ -1198,24 +1283,30 @@ export class MatterManager {
               info.isOn = newDev.isOn;
             }
 
-            if (fanEndpoint && fanEndpoint.state?.fanControl && newDev.fanMode) {
+            if (newDev.fanMode) {
               const targetFM = haFanModeToMatter(newDev.fanMode);
               const targetPct = haFanModeToPercent(newDev.fanMode, dev.fanModes);
               const targetSpd = haFanModeToSpeed(newDev.fanMode, dev.fanModes);
 
               const fcUpdates = {};
-              if (fanEndpoint.state.fanControl.fanMode !== targetFM) fcUpdates.fanMode = targetFM;
-              if (fanEndpoint.state.fanControl.percentSetting !== targetPct) {
+              const currentM = endpoint.state?.fanControl?.fanMode;
+              if (currentM !== targetFM) fcUpdates.fanMode = targetFM;
+              if (endpoint.state?.fanControl?.percentSetting !== targetPct) {
                 fcUpdates.percentSetting = targetPct;
                 fcUpdates.percentCurrent = targetPct;
               }
-              if (fanEndpoint.state.fanControl.speedSetting !== targetSpd) {
+              if (endpoint.state?.fanControl?.speedSetting !== targetSpd) {
                 fcUpdates.speedSetting = targetSpd;
                 fcUpdates.speedCurrent = targetSpd;
               }
 
               if (Object.keys(fcUpdates).length > 0) {
-                await fanEndpoint.set({ fanControl: fcUpdates });
+                if (endpoint.state?.fanControl) {
+                  await endpoint.set({ fanControl: fcUpdates });
+                }
+                if (fanEndpoint && fanEndpoint.state?.fanControl) {
+                  await fanEndpoint.set({ fanControl: fcUpdates });
+                }
                 info.fanMode = newDev.fanMode;
               }
             }
@@ -1566,7 +1657,7 @@ export class MatterManager {
       }
     }
 
-    if (dev.deviceKind === 'switch' || dev.deviceKind === 'light') {
+    if (dev.deviceKind === 'switch' || dev.deviceKind === 'light' || dev.deviceKind === 'pump') {
       const newState = !dev.isOn;
       return await this.haClient.setEntityState(dev.entityId, newState);
     }

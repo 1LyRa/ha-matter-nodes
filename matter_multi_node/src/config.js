@@ -51,7 +51,7 @@ export function loadConfig() {
 
   const filterDomains = Array.isArray(fileOptions.filter_domains)
     ? fileOptions.filter_domains
-    : ['switch', 'input_boolean', 'sensor', 'light', 'climate'];
+    : ['switch', 'input_boolean', 'sensor', 'binary_sensor', 'light', 'climate'];
 
   const includeEntities = Array.isArray(fileOptions.include_entities)
     ? fileOptions.include_entities

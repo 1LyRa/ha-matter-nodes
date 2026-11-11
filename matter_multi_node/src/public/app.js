@@ -278,7 +278,7 @@ async function fetchNodes() {
     if (!res.ok) return;
     allDevices = await res.json();
 
-    const switchCount = allDevices.filter((d) => d.deviceKind === 'switch').length;
+    const switchCount = allDevices.filter((d) => d.deviceKind === 'switch' || d.deviceKind === 'pump').length;
     const lightCount = allDevices.filter((d) => d.deviceKind === 'light').length;
     const climateCount = allDevices.filter((d) => d.deviceKind === 'climate').length;
     const sensorCount = allDevices.filter((d) => d.deviceKind === 'sensor').length;
@@ -302,7 +302,7 @@ async function fetchNodes() {
 function getFilteredDevices(query) {
   return allDevices.filter((dev) => {
     // Tab filtering
-    if (activeTab === 'switch' && dev.deviceKind !== 'switch') return false;
+    if (activeTab === 'switch' && dev.deviceKind !== 'switch' && dev.deviceKind !== 'pump') return false;
     if (activeTab === 'light' && dev.deviceKind !== 'light') return false;
     if (activeTab === 'climate' && dev.deviceKind !== 'climate') return false;
     if (activeTab === 'sensor' && dev.deviceKind !== 'sensor') return false;
@@ -394,6 +394,7 @@ function renderCards() {
 
 function renderCard(dev) {
   const isSwitch = dev.deviceKind === 'switch';
+  const isPump = dev.deviceKind === 'pump';
   const isLight = dev.deviceKind === 'light';
   const isClimate = dev.deviceKind === 'climate';
   const isSensor = dev.deviceKind === 'sensor';
@@ -405,7 +406,9 @@ function renderCard(dev) {
     : `<span class="pill idle">Dormant</span>`;
 
   let typePill = '<span class="pill type-badge">Device</span>';
-  if (isSwitch) {
+  if (isPump) {
+    typePill = '<span class="pill type-badge pump">🌊 Fountain / Pump</span>';
+  } else if (isSwitch) {
     typePill = '<span class="pill type-badge">Switch</span>';
   } else if (isLight) {
     if (dev.lightType === 'extended_color') {
@@ -572,7 +575,7 @@ function renderCard(dev) {
   } else {
     bodyContent = `
       <div class="unannounced-box">
-        <p>This ${isSwitch ? 'switch' : isLight ? 'light' : isClimate ? 'thermostat / AC' : 'sensor'} is dormant. Announce it to allocate a Matter UDP port and pairing QR code.</p>
+        <p>This ${isPump ? 'fountain / pump' : isSwitch ? 'switch' : isLight ? 'light' : isClimate ? 'thermostat / AC' : 'sensor'} is dormant. Announce it to allocate a Matter UDP port and pairing QR code.</p>
         <button class="btn-announce" onclick="enableAnnouncement('${escapeHtml(dev.id)}', this)">
           ⚡ Announce as Matter Device
         </button>
@@ -595,7 +598,7 @@ function renderCard(dev) {
         </button>
       </div>
     `;
-  } else if (isSwitch || isLight) {
+  } else if (isSwitch || isLight || isPump) {
     footerContent = `
       <div class="state-indicator">
         <span class="state-dot ${dev.isOn ? 'on' : ''}"></span>

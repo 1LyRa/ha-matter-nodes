@@ -161,7 +161,7 @@ export class HAClient extends EventEmitter {
           console.log(`[HA Client] Loaded ${this.entityRegistry.size} entities from HA entity registry.`);
         }
       } catch (err) {
-        // Ignored if permissions restrict registry access
+        console.warn('[HA Client] Could not fetch entity registry (falling back to heuristic grouping):', err.message);
       }
 
       try {
@@ -173,7 +173,7 @@ export class HAClient extends EventEmitter {
           console.log(`[HA Client] Loaded ${this.deviceRegistry.size} devices from HA device registry.`);
         }
       } catch (err) {
-        // Ignored if permissions restrict registry access
+        console.warn('[HA Client] Could not fetch device registry (falling back to heuristic naming):', err.message);
       }
 
       this.emit('states_loaded', this.states);
