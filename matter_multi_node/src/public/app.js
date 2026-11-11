@@ -53,6 +53,7 @@ let cachedLogs = [];
 let logsPollTimer = null;
 let isLogsOpen = false;
 const expandedPairingInfo = new Set();
+let lastCardsRenderKey = '';
 
 function openLogsView() {
   isLogsOpen = true;
@@ -241,10 +242,8 @@ async function fetchNodes() {
   }
 }
 
-function renderCards() {
-  const query = (searchInput.value || '').trim().toLowerCase();
-
-  const filtered = allDevices.filter((dev) => {
+function getFilteredDevices(query) {
+  return allDevices.filter((dev) => {
     // Tab filtering
     if (activeTab === 'switch' && dev.deviceKind !== 'switch') return false;
     if (activeTab === 'light' && dev.deviceKind !== 'light') return false;
@@ -260,6 +259,52 @@ function renderCards() {
       (dev.port && String(dev.port).includes(query))
     );
   });
+}
+
+function computeCardsRenderKey(filtered, query) {
+  return JSON.stringify({
+    tab: activeTab,
+    query,
+    expanded: Array.from(expandedPairingInfo).sort(),
+    devices: filtered.map((d) => ({
+      id: d.id,
+      name: d.friendlyName,
+      state: d.state,
+      isAnnounced: d.isAnnounced,
+      isCommissioned: d.isCommissioned,
+      port: d.port,
+      qr: !!d.qrCodeDataUrl,
+      code: d.manualPairingCode,
+      curTemp: d.currentTemp,
+      tgtTemp: d.targetTemp,
+      tgtLow: d.targetTempLow,
+      tgtHigh: d.targetTempHigh,
+      hvacMode: d.hvacMode,
+      hvacAction: d.hvacAction,
+      fanMode: d.fanMode,
+      bri: d.brightness,
+      ct: d.colorTemp,
+      temp: d.temperature,
+      hum: d.humidity,
+      bat: d.battery,
+    })),
+  });
+}
+
+function renderCards() {
+  const query = (searchInput.value || '').trim().toLowerCase();
+  const filtered = getFilteredDevices(query);
+
+  // State fingerprint to prevent destructive DOM wipes during polling if data hasn't changed
+  const currentRenderKey = computeCardsRenderKey(filtered, query);
+
+  if (currentRenderKey === lastCardsRenderKey) {
+    return;
+  }
+
+  const activeEl = document.activeElement;
+  const activeId = activeEl && activeEl.id ? activeEl.id : null;
+  const isFocusedInCards = activeEl && cardsGrid.contains(activeEl);
 
   if (filtered.length === 0) {
     if (allDevices.length === 0) {
@@ -274,10 +319,20 @@ function renderCards() {
           <p>No devices matching "${escapeHtml(query)}" in this tab.</p>
         </div>`;
     }
+    lastCardsRenderKey = currentRenderKey;
     return;
   }
 
   cardsGrid.innerHTML = filtered.map((dev) => renderCard(dev)).join('');
+  lastCardsRenderKey = currentRenderKey;
+
+  // Preserve user focus if active element was inside cardsGrid
+  if (activeId && isFocusedInCards) {
+    const restored = document.getElementById(activeId);
+    if (restored) {
+      restored.focus({ preventScroll: true });
+    }
+  }
 }
 
 function renderCard(dev) {
@@ -617,6 +672,9 @@ window.togglePairingInfo = function (deviceId) {
   if (btn) {
     btn.textContent = expandedPairingInfo.has(deviceId) ? '✕ Hide Pairing QR & Code' : '📱 Show Pairing QR & Code';
   }
+  // Sync render key so next background poll doesn't detect a spurious change
+  const query = (searchInput.value || '').trim().toLowerCase();
+  lastCardsRenderKey = computeCardsRenderKey(getFilteredDevices(query), query);
 };
 
 window.resetNodePairing = async function (deviceId, friendlyName, btn) {

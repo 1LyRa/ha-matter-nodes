@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.4
+
+- **Composed Fan Device (`0x002B`) for AC / Climate Nodes**: Exposed a dedicated `FanDevice` child endpoint (endpoint 2) alongside `ThermostatDevice` (endpoint 1) on climate nodes in full compliance with the Matter composed device specification. Solves the issue where Google Home ignored the `FanControl` cluster on the thermostat endpoint; Google Home now natively maps and displays AC fan speed controls (percentages, steps, Auto/Low/Medium/High modes).
+- **Resilient Fan Capability Detection**: Automatically detects AC fan support via Home Assistant's `supported_features` bitmask (`FAN_MODE = 8`) or current `fan_mode` state, supplying standard fan modes (`auto`, `low`, `medium`, `high`) even when integrations omit an explicit `fan_modes` array.
+- **Fixed UI Periodic Jump & Focus Loss**: Added smart state diffing to the dashboard polling mechanism. Periodic background refresh ticks no longer wipe and recreate the DOM grid if data has not changed, eliminating the periodic jump on focus and preserving active button/input focus and selection.
+
 ## 1.5.3
 
 - **"Reset to Re-pair" Button for Commissioned Nodes**: Added a `🔄 Reset to Re-pair` button on all commissioned device cards and pairing panels. Solves the issue where removing a device in Google Home leaves the local Matter node bonded to the orphaned fabric. Clicking this button immediately factory-resets the node, erases its persistent fabric storage, and generates a fresh QR code and pairing passcode ready to be scanned in Google Home.

@@ -8,6 +8,7 @@ import {
   ColorTemperatureLightDevice,
   ExtendedColorLightDevice,
   ThermostatDevice,
+  FanDevice,
 } from '@matter/main/devices';
 import { PowerSourceServer } from '@matter/main/behaviors/power-source';
 import { OnOffServer } from '@matter/main/behaviors/on-off';
@@ -359,8 +360,14 @@ export class MatterManager {
         const hasCool = supportedModes.includes('cool');
         const hasHeat = supportedModes.includes('heat');
         const hasAuto = supportedModes.includes('auto') || supportedModes.includes('heat_cool');
-        const fanModes = stateObj.attributes?.fan_modes || [];
+        const supportedFeatures = Number(stateObj.attributes?.supported_features || 0);
+        const rawFanModes = Array.isArray(stateObj.attributes?.fan_modes) ? stateObj.attributes.fan_modes : [];
         const fanMode = stateObj.attributes?.fan_mode || null;
+        // In Home Assistant, ClimateEntityFeature.FAN_MODE = 8
+        const supportsFan = (supportedFeatures & 8) !== 0 || fanMode !== null || rawFanModes.length > 0;
+        const fanModes = rawFanModes.length > 0
+          ? rawFanModes
+          : (supportsFan ? ['auto', 'low', 'medium', 'high'] : []);
 
         const currentTemp = stateObj.attributes?.current_temperature ?? null;
         const targetTemp = stateObj.attributes?.temperature ?? null;
@@ -561,7 +568,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.5.3',
+          softwareVersionString: '1.5.4',
         },
       });
 
@@ -572,7 +579,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.5.3',
+            softwareVersionString: '1.5.4',
           },
         });
       } catch (err) {
@@ -843,16 +850,11 @@ export class MatterManager {
         if (dev.hasAuto) features.push(Thermostat.Feature.AutoMode);
 
         const hasFanControl = Array.isArray(dev.fanModes) && dev.fanModes.length > 0;
-        const thermostatBehaviors = [
+        const ThermostatClass = ThermostatDevice.with(
           ThermostatServer.with(...features),
           ThermostatUserInterfaceConfigurationServer,
-          OnOffServer,
-        ];
-        if (hasFanControl) {
-          thermostatBehaviors.push(FanControlServer.with(FanControl.Feature.MultiSpeed, FanControl.Feature.Auto));
-        }
-
-        const ThermostatClass = ThermostatDevice.with(...thermostatBehaviors);
+          OnOffServer
+        );
 
         const localTemp = convertTemperatureToMatter(dev.currentTemp, dev.tempUnit) ?? 2100;
         const mTarget = dev.targetTemp !== null ? convertTemperatureToMatter(dev.targetTemp, dev.tempUnit) : 2200;
@@ -912,6 +914,10 @@ export class MatterManager {
           },
         };
 
+        const endpoint = await node.add(ThermostatClass, endpointConfig);
+        endpoints.thermostat = endpoint;
+
+        let fanEndpoint = null;
         if (hasFanControl) {
           const fanSeq = haFanModesToMatterSequence(dev.fanModes);
           const currentFM = haFanModeToMatter(dev.fanMode);
@@ -919,18 +925,24 @@ export class MatterManager {
           const speedMax = Math.max(1, haFanModesToSpeeds(dev.fanModes).length);
           const currentSpd = haFanModeToSpeed(dev.fanMode, dev.fanModes);
 
-          endpointConfig.fanControl = {
-            fanMode: currentFM,
-            fanModeSequence: fanSeq,
-            percentSetting: currentPct,
-            percentCurrent: currentPct,
-            speedMax: speedMax,
-            speedSetting: currentSpd,
-            speedCurrent: currentSpd,
-          };
-        }
+          const FanClass = FanDevice.with(
+            FanControlServer.with(FanControl.Feature.MultiSpeed, FanControl.Feature.Auto)
+          );
 
-        const endpoint = await node.add(ThermostatClass, endpointConfig);
+          fanEndpoint = await node.add(FanClass, {
+            id: 'fan',
+            fanControl: {
+              fanMode: currentFM,
+              fanModeSequence: fanSeq,
+              percentSetting: currentPct,
+              percentCurrent: currentPct,
+              speedMax: speedMax,
+              speedSetting: currentSpd,
+              speedCurrent: currentSpd,
+            },
+          });
+          endpoints.fan = fanEndpoint;
+        }
         endpoints.thermostat = endpoint;
 
         let updatingFromHA = false;
@@ -1004,11 +1016,11 @@ export class MatterManager {
           });
         }
 
-        // Fan Speed & Fan Mode for Google Home
-        if (hasFanControl && endpoint.events.fanControl) {
+        // Fan Speed & Fan Mode for Google Home (Composed Fan Device)
+        if (fanEndpoint && fanEndpoint.events.fanControl) {
           let fanDebounceTimer = null;
 
-          const fanModeEvent = endpoint.events.fanControl.events?.fanMode$Changed || endpoint.events.fanControl.events?.fanMode$Changing;
+          const fanModeEvent = fanEndpoint.events.fanControl.events?.fanMode$Changed || fanEndpoint.events.fanControl.events?.fanMode$Changing;
           if (fanModeEvent) {
             fanModeEvent.on(async (newMode) => {
               if (updatingFromHA) return;
@@ -1035,12 +1047,12 @@ export class MatterManager {
             }, 100);
           };
 
-          const pctEvent = endpoint.events.fanControl.events?.percentSetting$Changing || endpoint.events.fanControl.events?.percentSetting$Changed;
+          const pctEvent = fanEndpoint.events.fanControl.events?.percentSetting$Changing || fanEndpoint.events.fanControl.events?.percentSetting$Changed;
           if (pctEvent) {
             pctEvent.on(handleSpeedPercentChange);
           }
 
-          const spdEvent = endpoint.events.fanControl.events?.speedSetting$Changing || endpoint.events.fanControl.events?.speedSetting$Changed;
+          const spdEvent = fanEndpoint.events.fanControl.events?.speedSetting$Changing || fanEndpoint.events.fanControl.events?.speedSetting$Changed;
           if (spdEvent) {
             spdEvent.on((spd) => {
               if (updatingFromHA || spd === null || spd === undefined) return;
@@ -1103,24 +1115,24 @@ export class MatterManager {
               info.isOn = newDev.isOn;
             }
 
-            if (hasFanControl && endpoint.state.fanControl && newDev.fanMode) {
+            if (fanEndpoint && fanEndpoint.state?.fanControl && newDev.fanMode) {
               const targetFM = haFanModeToMatter(newDev.fanMode);
               const targetPct = haFanModeToPercent(newDev.fanMode, dev.fanModes);
               const targetSpd = haFanModeToSpeed(newDev.fanMode, dev.fanModes);
 
               const fcUpdates = {};
-              if (endpoint.state.fanControl.fanMode !== targetFM) fcUpdates.fanMode = targetFM;
-              if (endpoint.state.fanControl.percentSetting !== targetPct) {
+              if (fanEndpoint.state.fanControl.fanMode !== targetFM) fcUpdates.fanMode = targetFM;
+              if (fanEndpoint.state.fanControl.percentSetting !== targetPct) {
                 fcUpdates.percentSetting = targetPct;
                 fcUpdates.percentCurrent = targetPct;
               }
-              if (endpoint.state.fanControl.speedSetting !== targetSpd) {
+              if (fanEndpoint.state.fanControl.speedSetting !== targetSpd) {
                 fcUpdates.speedSetting = targetSpd;
                 fcUpdates.speedCurrent = targetSpd;
               }
 
               if (Object.keys(fcUpdates).length > 0) {
-                await endpoint.set({ fanControl: fcUpdates });
+                await fanEndpoint.set({ fanControl: fcUpdates });
                 info.fanMode = newDev.fanMode;
               }
             }
@@ -1376,7 +1388,7 @@ export class MatterManager {
       if (change.attributes?.fan_mode !== undefined) {
         dev.fanMode = change.attributes.fan_mode;
       }
-      if (change.attributes?.fan_modes !== undefined) {
+      if (change.attributes?.fan_modes !== undefined && Array.isArray(change.attributes.fan_modes) && change.attributes.fan_modes.length > 0) {
         dev.fanModes = change.attributes.fan_modes;
       }
     } else if (dev.deviceKind === 'sensor') {
