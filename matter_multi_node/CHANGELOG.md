@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.7.5
+
+- **Matter AirQuality Cluster Conformance Fix**:
+  - Enabled `AirQuality.Feature.Fair`, `Moderate`, `VeryPoor`, and `ExtremelyPoor` on `AirPurifierDevice`'s `AirQualityServer`.
+  - Conforms to the Matter specification by allowing air quality levels 0 through 6 (`Good`, `Fair`, `Moderate`, `Poor`, `VeryPoor`, `ExtremelyPoor`).
+  - Resolves startup boot crashes (`Validating ... Conformance "FAIR": Matter does not allow enum value Fair (ID 2) here`) when purifiers report fair or moderate air quality from Home Assistant.
+- **Fault-Isolated Startup Loop**:
+  - Wrapped each device's startup in `syncWithHAStates` in an isolated `try/catch` block.
+  - An error or schema incompatibility on one device can no longer cascade or abort the initialization of other devices.
+- **Self-Healing Storage Recovery**:
+  - Added automatic recovery for behavior schema/storage validation errors. If an existing node fails to rehydrate due to stale behavior cache from prior versions, its individual storage cache is safely cleared and retried fresh automatically.
+- **Canonical Fountain Helper Enforcement**:
+  - Explicitly designated `switch.bedroom_fountain` and `switch.living_room_fountain` as the canonical fountain devices.
+  - Suppressed duplicate raw-power auxiliary switches (`switch.*_raw_power`) from appearing as separate or dormant devices in the UI.
+  - Mapped auxiliary fountain entities to the canonical helper switches and guarded state updates so secondary plug state changes cannot overwrite the helper switch's live ON/OFF status.
+
+## 1.7.4
+
+- **Reflect Home Assistant Version in Matter Hardware Version**:
+  - Captured Home Assistant core version during WebSocket authentication (`msg.ha_version`) and exposed it in `basicInformation.hardwareVersionString` (e.g. `HA 2026.11.1`), visible in Matter controller device info panels.
+- **Composite Multi-Sensor Availability Logic**:
+  - Multi-sensor devices (e.g. Aqara FP300 presence sensors) now evaluate availability across all primary measurement entities (temperature, humidity, occupancy). A transient drop of a single secondary entity no longer marks the device as unavailable.
+- **10-Second Availability Debounce**:
+  - Introduced a 10-second debounce timer before taking Matter nodes offline (`node.stop()`). Transient integration reloads or momentary 300ms–1s offline spikes in Home Assistant no longer sever Matter controller connections.
+- **Bi-Directional Fountain/Pump Synchronization**:
+  - Fixed state change handling to ensure pump and fountain devices remain fully synchronized with live Home Assistant states.
+
 ## 1.7.3
 
 - **Reflect Home Assistant Entity Offline/Unavailable State in Matter**:
