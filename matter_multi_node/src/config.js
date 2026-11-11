@@ -63,6 +63,8 @@ export function loadConfig() {
 
   const storagePath = process.env.STORAGE_PATH || (fs.existsSync('/data') ? '/data/matter' : path.resolve('./data/matter'));
 
+  const showAllSensors = Boolean(fileOptions.show_all_sensors ?? (process.env.SHOW_ALL_SENSORS === 'true'));
+
   return {
     haWsUrl,
     haToken,
@@ -73,6 +75,7 @@ export function loadConfig() {
     filterDomains,
     includeEntities,
     excludeEntities,
+    showAllSensors,
     storagePath,
   };
 }

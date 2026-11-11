@@ -182,6 +182,23 @@ function convertBatteryToMatter(value) {
   return Math.min(200, Math.max(0, Math.round(Number(value) * 2)));
 }
 
+function getSensorBaseId(entityId) {
+  // Strip sensor role keyword and preserve any numeric instance suffix
+  // e.g. sensor.presence_multi_sensor_fp300_temperature_2 -> sensor.presence_multi_sensor_fp300_2
+  // sensor.presence_multi_sensor_fp300_humidity -> sensor.presence_multi_sensor_fp300
+  return entityId.replace(/_(?:temperature|temp|humidity|humid|battery|bat)(?:_(\d+))?$/i, (match, num) => {
+    return num ? `_${num}` : '';
+  });
+}
+
+function extractSensorBaseFriendly(rawFriendly) {
+  if (!rawFriendly) return '';
+  return rawFriendly
+    .trim()
+    .replace(/\s*[-–—:]?\s*(?:Temperature|Humidity|Battery|Battery Level|temp|humid|bat)(?:\s+\d+)?$/i, '')
+    .trim();
+}
+
 export class MatterManager {
   constructor(config, haClient) {
     this.config = config;
@@ -189,6 +206,8 @@ export class MatterManager {
     this.nodes = new Map(); // deviceId -> { node, endpoints, info, updateFromHA }
     this.discoveredDevices = new Map(); // deviceId -> device object
     this.entityToDeviceId = new Map(); // entityId -> deviceId
+    this.showAllSensors = config.showAllSensors ?? false;
+    this.lastStates = null;
     this.enabledEntitiesFile = path.join(this.config.storagePath, 'enabled_entities.json');
     this.enabledConfig = this.loadEnabledConfig();
 
@@ -213,6 +232,14 @@ export class MatterManager {
       console.warn('[Matter Manager] Could not load enabled_entities.json:', err.message);
     }
     return {};
+  }
+
+  setShowAllSensors(showAll) {
+    this.showAllSensors = !!showAll;
+    console.log(`[Matter Manager] showAllSensors set to: ${this.showAllSensors}`);
+    if (this.lastStates) {
+      this.syncWithHAStates(this.lastStates);
+    }
   }
 
   saveEnabledConfig() {
@@ -263,11 +290,14 @@ export class MatterManager {
   }
 
   async syncWithHAStates(statesMap) {
+    this.lastStates = statesMap;
     console.log('[Matter Manager] Synchronizing entities and sensors with Home Assistant...');
 
     this.entityToDeviceId.clear();
     this.discoveredDevices.clear();
 
+    const primaryDeviceIds = new Set();
+    const primaryBaseIds = new Set();
     const rawSensors = [];
 
     for (const [entityId, stateObj] of statesMap.entries()) {
@@ -276,6 +306,14 @@ export class MatterManager {
       }
 
       const domain = entityId.split('.')[0];
+      const baseName = entityId.split('.')[1] || '';
+
+      // Track primary device affiliations from HA Entity Registry
+      const reg = this.haClient?.entityRegistry?.get(entityId);
+      if (domain === 'switch' || domain === 'input_boolean' || domain === 'light' || domain === 'climate') {
+        if (reg?.device_id) primaryDeviceIds.add(reg.device_id);
+        primaryBaseIds.add(baseName);
+      }
 
       // 1. Process Switches & Input Booleans
       if (domain === 'switch' || domain === 'input_boolean') {
@@ -410,9 +448,9 @@ export class MatterManager {
       if (domain === 'sensor') {
         const deviceClass = stateObj.attributes?.device_class;
         const unit = stateObj.attributes?.unit_of_measurement;
-        const isTemp = deviceClass === 'temperature' || /_(temperature|temp)$/i.test(entityId);
-        const isHumid = deviceClass === 'humidity' || /_(humidity|humid)$/i.test(entityId);
-        const isBat = deviceClass === 'battery' || /_(battery|bat)$/i.test(entityId);
+        const isTemp = deviceClass === 'temperature' || /_(temperature|temp)(?:_\d+)?$/i.test(entityId);
+        const isHumid = deviceClass === 'humidity' || /_(humidity|humid)(?:_\d+)?$/i.test(entityId);
+        const isBat = (deviceClass === 'battery' || /_(battery|bat)(?:_\d+)?$/i.test(entityId)) && !/voltage/i.test(entityId);
 
         if (isTemp || isHumid || isBat) {
           rawSensors.push({
@@ -425,22 +463,30 @@ export class MatterManager {
       }
     }
 
-    // Group sensors that belong together (e.g. sensor.living_room_*_temperature, *_humidity, *_battery)
-    const groupedSensors = new Map(); // baseId -> { baseId, friendlyName, temp, humid, bat }
+    // Group sensors that belong together into physical devices
+    const groupedSensors = new Map();
 
     for (const s of rawSensors) {
-      // Calculate base ID by stripping the role suffix
-      const baseId = s.entityId.replace(/_(temperature|temp|humidity|humid|battery|bat)$/i, '');
-      const rawFriendly = s.stateObj.attributes?.friendly_name || s.entityId;
-      const baseFriendly = rawFriendly.replace(/\s+(Temperature|Humidity|Battery|temp|humid|bat)$/i, '').trim();
+      const regEntry = this.haClient?.entityRegistry?.get(s.entityId);
+      const devReg = regEntry?.device_id ? this.haClient?.deviceRegistry?.get(regEntry.device_id) : null;
+
+      const baseId = getSensorBaseId(s.entityId);
+      const fallbackFriendly = extractSensorBaseFriendly(s.stateObj.attributes?.friendly_name || s.entityId);
+      const deviceName = devReg?.name_by_user || devReg?.name || fallbackFriendly;
+
+      // Check if this sensor belongs to an existing primary device (switch, light, climate)
+      const rawBaseName = s.entityId.split('.')[1]?.replace(/_(?:temperature|temp|humidity|humid|battery|bat)(?:_\d+)?$/i, '');
+      const belongsToPrimary = (regEntry?.device_id && primaryDeviceIds.has(regEntry.device_id)) ||
+        primaryBaseIds.has(rawBaseName);
 
       if (!groupedSensors.has(baseId)) {
         groupedSensors.set(baseId, {
           baseId,
-          friendlyName: baseFriendly || baseId,
+          friendlyName: deviceName || baseId,
           temp: null,
           humid: null,
           bat: null,
+          belongsToPrimary,
         });
       }
 
@@ -456,14 +502,24 @@ export class MatterManager {
 
     // Add grouped sensors to discovered devices
     for (const [baseId, group] of groupedSensors.entries()) {
-      // Must have at least a temperature or humidity sensor
-      if (!group.temp && !group.humid) continue;
+      // By default, hide internal sensors belonging to primary devices (ACs, switches, lights)
+      if (group.belongsToPrimary && !this.showAllSensors) {
+        continue;
+      }
+
+      // Must have at least a temperature or humidity sensor (or battery when showing all)
+      if (!group.temp && !group.humid && !this.showAllSensors) continue;
+
+      const isMulti = (group.temp && group.humid) || (group.temp && group.bat) || (group.humid && group.bat);
+      const friendlyName = isMulti
+        ? group.friendlyName
+        : (group.temp?.stateObj.attributes?.friendly_name || group.humid?.stateObj.attributes?.friendly_name || group.friendlyName);
 
       const deviceObj = {
         id: baseId,
         domain: 'sensor',
         deviceKind: 'sensor',
-        friendlyName: group.friendlyName,
+        friendlyName,
         tempEntity: group.temp?.entityId || null,
         humidEntity: group.humid?.entityId || null,
         batEntity: group.bat?.entityId || null,
@@ -471,6 +527,8 @@ export class MatterManager {
         humidity: group.humid ? parseFloat(group.humid.stateObj.state) : null,
         battery: group.bat ? parseFloat(group.bat.stateObj.state) : null,
         tempUnit: group.temp?.unit || '°C',
+        isMultiSensor: !!isMulti,
+        isSubSensor: !!group.belongsToPrimary,
       };
 
       this.discoveredDevices.set(baseId, deviceObj);
@@ -478,6 +536,31 @@ export class MatterManager {
       if (group.temp) this.entityToDeviceId.set(group.temp.entityId, baseId);
       if (group.humid) this.entityToDeviceId.set(group.humid.entityId, baseId);
       if (group.bat) this.entityToDeviceId.set(group.bat.entityId, baseId);
+    }
+
+    // If showAllSensors is enabled, expose every raw sub-sensor entity individually as well
+    if (this.showAllSensors) {
+      for (const s of rawSensors) {
+        if (!this.discoveredDevices.has(s.entityId)) {
+          const friendly = s.stateObj.attributes?.friendly_name || s.entityId;
+          this.discoveredDevices.set(s.entityId, {
+            id: s.entityId,
+            domain: 'sensor',
+            deviceKind: 'sensor',
+            friendlyName: friendly,
+            tempEntity: s.role === 'temperature' ? s.entityId : null,
+            humidEntity: s.role === 'humidity' ? s.entityId : null,
+            batEntity: s.role === 'battery' ? s.entityId : null,
+            temperature: s.role === 'temperature' ? parseFloat(s.stateObj.state) : null,
+            humidity: s.role === 'humidity' ? parseFloat(s.stateObj.state) : null,
+            battery: s.role === 'battery' ? parseFloat(s.stateObj.state) : null,
+            tempUnit: s.unit || '°C',
+            isMultiSensor: false,
+            isSubSensor: true,
+          });
+          this.entityToDeviceId.set(s.entityId, s.entityId);
+        }
+      }
     }
 
     // Re-sync any already running nodes
@@ -568,7 +651,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.5.4',
+          softwareVersionString: '1.5.5',
         },
       });
 
@@ -579,7 +662,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.5.4',
+            softwareVersionString: '1.5.5',
           },
         });
       } catch (err) {
@@ -1417,6 +1500,8 @@ export class MatterManager {
       if (activeEntry) {
         result.push({
           ...activeEntry.info,
+          isSubSensor: !!dev.isSubSensor,
+          isMultiSensor: !!dev.isMultiSensor,
           isCommissioned: !!activeEntry.node.lifecycle.isCommissioned,
           isAnnounced: true,
         });
@@ -1427,6 +1512,8 @@ export class MatterManager {
           entityId: dev.entityId || deviceId,
           friendlyName: dev.friendlyName,
           deviceKind: dev.deviceKind,
+          isSubSensor: !!dev.isSubSensor,
+          isMultiSensor: !!dev.isMultiSensor,
           lightType: dev.lightType || null,
           hvacMode: dev.hvacMode || null,
           hvacAction: dev.hvacAction || null,

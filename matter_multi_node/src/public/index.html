@@ -26,6 +26,9 @@
         <!-- Logs Toggle Button -->
         <button id="btnToggleLogs" class="header-action-btn" title="View live Matter & service logs">📋 Logs</button>
 
+        <!-- Settings Button -->
+        <button id="btnSettings" class="header-action-btn" title="Dashboard Settings">⚙️ Settings</button>
+
         <!-- Theme Picker -->
         <div class="theme-switcher" id="themeSwitcher">
           <button class="theme-btn active" data-theme="auto" title="Follow system theme">Auto</button>
@@ -99,6 +102,30 @@
       </div>
       <div id="logsTerminal" class="logs-terminal">
         <div class="log-loading">Loading live logs...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">⚙️ Dashboard Settings</div>
+        <button id="btnCloseSettings" class="modal-close-btn" title="Close settings">✖</button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-row">
+          <div class="setting-text">
+            <label for="toggleShowAllSensors" class="setting-label">Show individual / internal sensors</label>
+            <p class="setting-help">
+              By default, multi-sensors are automatically grouped into composite physical devices (e.g. Bathroom Presence Sensor), and internal sensors belonging to switches, lights, or climate units are hidden. Turn this on to view and announce all raw sensor entities individually.
+            </p>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggleShowAllSensors">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
       </div>
     </div>
   </div>

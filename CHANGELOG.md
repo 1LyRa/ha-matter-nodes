@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.5
+
+- **Physical Multi-Sensor Grouping (Instance `_2`, `_3` Suffix Support)**: Fixed sensor base ID matching to support instance numbering (e.g. `sensor.presence_multi_sensor_fp300_temperature_2`, `_humidity_2`, `_battery_2`). Sub-sensors now properly group into their composite physical device ("Bathroom presence sensor") rather than splitting into separate orphan sensor cards.
+- **Clean Device Friendly Name Extraction**: Strips trailing sensor role keywords and instance numbers from friendly names (e.g. "Kitchen presence sensor Temperature" -> "Kitchen presence sensor").
+- **Hide Internal Sub-Sensors by Default**: Automatically hides internal temperature/humidity/battery sensors that belong to existing switches, lights, or climate units, preventing dashboard clutter.
+- **Dashboard Settings Modal ("Show All Sensors")**: Added a Settings modal with a toggle to optionally display all raw, unbundled individual sensors and internal sub-sensors. Persists in backend and dashboard preferences.
+- **Home Assistant Device Registry Integration**: Fetches Home Assistant entity and device registries to automatically detect physical hardware device names and groupings.
+
 ## 1.5.4
 
 - **Composed Fan Device (`0x002B`) for AC / Climate Nodes**: Exposed a dedicated `FanDevice` child endpoint (endpoint 2) alongside `ThermostatDevice` (endpoint 1) on climate nodes in full compliance with the Matter composed device specification. Solves the issue where Google Home ignored the `FanControl` cluster on the thermostat endpoint; Google Home now natively maps and displays AC fan speed controls (percentages, steps, Auto/Low/Medium/High modes).

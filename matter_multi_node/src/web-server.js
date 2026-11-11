@@ -27,6 +27,20 @@ export function createWebServer(config, matterManager, haClient) {
     res.json(matterManager.getAllEntitiesInfo());
   });
 
+  app.get('/api/settings', (req, res) => {
+    res.json({
+      showAllSensors: matterManager.showAllSensors,
+    });
+  });
+
+  app.post('/api/settings', (req, res) => {
+    const { showAllSensors } = req.body;
+    if (typeof showAllSensors === 'boolean') {
+      matterManager.setShowAllSensors(showAllSensors);
+    }
+    res.json({ ok: true, showAllSensors: matterManager.showAllSensors });
+  });
+
   app.get('/api/logs', (req, res) => {
     res.json({ logs: getRecentLogs() });
   });

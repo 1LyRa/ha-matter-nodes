@@ -46,6 +46,10 @@ const autoScrollCheck = document.getElementById('autoScrollCheck');
 const btnRefreshLogs = document.getElementById('btnRefreshLogs');
 const btnCopyLogs = document.getElementById('btnCopyLogs');
 const btnClearLogs = document.getElementById('btnClearLogs');
+const btnSettings = document.getElementById('btnSettings');
+const settingsModal = document.getElementById('settingsModal');
+const btnCloseSettings = document.getElementById('btnCloseSettings');
+const toggleShowAllSensors = document.getElementById('toggleShowAllSensors');
 
 let allDevices = [];
 let activeTab = 'all';
@@ -104,6 +108,59 @@ if (btnToggleLogs) {
 
 if (btnCloseLogs) {
   btnCloseLogs.addEventListener('click', closeLogsView);
+}
+
+// Settings Modal
+function openSettings() {
+  if (settingsModal) settingsModal.style.display = 'flex';
+}
+
+function closeSettings() {
+  if (settingsModal) settingsModal.style.display = 'none';
+}
+
+if (btnSettings) {
+  btnSettings.addEventListener('click', openSettings);
+}
+
+if (btnCloseSettings) {
+  btnCloseSettings.addEventListener('click', closeSettings);
+}
+
+if (settingsModal) {
+  settingsModal.addEventListener('click', (e) => {
+    if (e.target === settingsModal) closeSettings();
+  });
+}
+
+async function fetchSettings() {
+  try {
+    const res = await fetch(`${apiBase}/api/settings`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (toggleShowAllSensors) {
+      toggleShowAllSensors.checked = !!data.showAllSensors;
+    }
+  } catch (err) {
+    console.error('Failed to load settings:', err);
+  }
+}
+
+if (toggleShowAllSensors) {
+  toggleShowAllSensors.addEventListener('change', async () => {
+    const showAll = toggleShowAllSensors.checked;
+    try {
+      await fetch(`${apiBase}/api/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ showAllSensors: showAll }),
+      });
+      lastCardsRenderKey = '';
+      await fetchNodes();
+    } catch (err) {
+      console.error('Failed to save settings:', err);
+    }
+  });
 }
 
 // Tab Switching
@@ -363,7 +420,11 @@ function renderCard(dev) {
   } else if (isClimate) {
     typePill = '<span class="pill type-badge">Climate / AC</span>';
   } else if (isSensor) {
-    typePill = '<span class="pill type-badge">Multi-Sensor</span>';
+    if (dev.isSubSensor) {
+      typePill = '<span class="pill type-badge" style="opacity: 0.85;">Sensor</span>';
+    } else {
+      typePill = '<span class="pill type-badge">Multi-Sensor</span>';
+    }
   }
 
   let formattedCode = dev.manualPairingCode || 'N/A';
@@ -761,6 +822,7 @@ searchInput.addEventListener('input', renderCards);
 
 // Initial load
 fetchStatus();
+fetchSettings();
 fetchNodes();
 
 // Live refresh every 3 seconds

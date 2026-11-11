@@ -12,6 +12,8 @@ export class HAClient extends EventEmitter {
     this.reconnectTimer = null;
     this.isConnected = false;
     this.states = new Map(); // entity_id -> state object
+    this.entityRegistry = new Map(); // entity_id -> entity registry entry
+    this.deviceRegistry = new Map(); // device_id -> device registry entry
   }
 
   start() {
@@ -146,9 +148,37 @@ export class HAClient extends EventEmitter {
         this.states.set(s.entity_id, s);
       }
       console.log(`[HA Client] Loaded ${states.length} entity states from HA.`);
+
+      // 2. Fetch Entity Registry & Device Registry for accurate device grouping
+      this.entityRegistry.clear();
+      this.deviceRegistry.clear();
+      try {
+        const entityReg = await this.sendRequest({ type: 'config/entity_registry/list' });
+        if (Array.isArray(entityReg)) {
+          for (const e of entityReg) {
+            this.entityRegistry.set(e.entity_id, e);
+          }
+          console.log(`[HA Client] Loaded ${this.entityRegistry.size} entities from HA entity registry.`);
+        }
+      } catch (err) {
+        // Ignored if permissions restrict registry access
+      }
+
+      try {
+        const devReg = await this.sendRequest({ type: 'config/device_registry/list' });
+        if (Array.isArray(devReg)) {
+          for (const d of devReg) {
+            this.deviceRegistry.set(d.id, d);
+          }
+          console.log(`[HA Client] Loaded ${this.deviceRegistry.size} devices from HA device registry.`);
+        }
+      } catch (err) {
+        // Ignored if permissions restrict registry access
+      }
+
       this.emit('states_loaded', this.states);
 
-      // 2. Subscribe to state changes
+      // 3. Subscribe to state changes
       await this.sendRequest({
         type: 'subscribe_events',
         event_type: 'state_changed',
