@@ -220,6 +220,143 @@ function extractSensorBaseFriendly(rawFriendly) {
     .trim();
 }
 
+function isChildOrAuxiliaryEntity(entityId, stateObj, regEntry, allStatesMap, haClient) {
+  if (!entityId) return false;
+
+  const domain = entityId.split('.')[0];
+  const baseName = entityId.split('.')[1] || '';
+  const friendlyName = (stateObj?.attributes?.friendly_name || '').toLowerCase();
+  const lowerId = entityId.toLowerCase();
+
+  // 1. Authoritative: HA Entity Registry category
+  // In Home Assistant, entities explicitly marked "config" or "diagnostic" are secondary child entities
+  if (regEntry?.entity_category === 'config' || regEntry?.entity_category === 'diagnostic') {
+    return true;
+  }
+
+  // 2. Child entity patterns in entity_id
+  const childPatterns = [
+    /(?:^|_)child_?lock(?:_\d+)?$/i,
+    /(?:^|_)(?:audible_|visual_)?alarm(?:_enabled)?(?:_\d+)?$/i,
+    /(?:^|_)(?:buzzer|beeper|siren)(?:_enabled)?(?:_\d+)?$/i,
+    /(?:^|_)raw_?power(?:_\d+)?$/i,
+    /(?:^|_)(?:indicator(?:_light)?|status_led|backlight|night_light|display_light)(?:_\d+)?$/i,
+    /(?:^|_)led(?:_\d+)?$/i,
+    /(?:^|_)(?:power_outage_memory|power_on_state|power_on_behavior|power_recovery)(?:_\d+)?$/i,
+    /(?:^|_)(?:auto_off|auto_close|inching|interlock|do_not_disturb|dnd)(?:_\d+)?$/i,
+    /(?:^|_)(?:tamper|pairing_mode|self_test|test_mode)(?:_\d+)?$/i,
+    /(?:^|_)(?:sensitivity|hold_time|detection_distance|radar_sensitivity|motion_sensitivity)(?:_\d+)?$/i,
+    /(?:^|_)(?:firmware|identify)(?:_\d+)?$/i,
+  ];
+
+  if (childPatterns.some((pattern) => pattern.test(lowerId))) {
+    return true;
+  }
+
+  // Child patterns in friendly_name
+  const childFriendlyPatterns = [
+    /\bchild\s*lock\b/i,
+    /\baudible\s*alarm\b/i,
+    /\bvisual\s*alarm\b/i,
+    /\balarm\s*enabled\b/i,
+    /\braw\s*power\b/i,
+    /\bindicator(?:\s+light)?\b/i,
+    /\bstatus\s*led\b/i,
+    /\bbacklight\b/i,
+    /\bnight\s*light\b/i,
+    /\bbuzzer\b/i,
+    /\bbeeper\b/i,
+    /\bauto[- ]off\b/i,
+    /\bauto[- ]close\b/i,
+    /\bpower[- ]on state\b/i,
+    /\bpower outage memory\b/i,
+    /\bdo not disturb\b/i,
+    /\bself[- ]test\b/i,
+    /\bidentify\b/i,
+    /\bsensitivity\b/i,
+    /\bhold time\b/i,
+  ];
+
+  if (childFriendlyPatterns.some((pattern) => pattern.test(friendlyName))) {
+    return true;
+  }
+
+  // 3. Sensor device auxiliary switch check:
+  // If the entity is a switch, but its name or device indicates it is an alarm/setting switch on a sensor device
+  if (domain === 'switch') {
+    const isSensorDeviceSwitch = /(?:leak|moisture|water_leak|smoke|presence|occupancy|motion|door|window|contact|vibration|temp(?:erature)?|humid(?:ity)?)_sensor/i.test(lowerId) ||
+      /\b(?:leak|moisture|water leak|presence|occupancy|smoke|door|contact)\s*sensor\b/i.test(friendlyName);
+    if (isSensorDeviceSwitch) {
+      return true;
+    }
+  }
+
+  // 4. Parent match heuristic:
+  // If stripping auxiliary suffix yields another entity that exists in HA states
+  if (domain === 'switch' && allStatesMap) {
+    const stripped = baseName.replace(/_(?:child_lock|raw_power|indicator(?:_light)?|status_led|led|backlight|buzzer|alarm_enabled|audible_alarm_enabled|visual_alarm_enabled|power_outage_memory)(?:_\d+)?$/i, '');
+    if (stripped !== baseName) {
+      if (allStatesMap.has(`switch.${stripped}`) || allStatesMap.has(`light.${stripped}`) || allStatesMap.has(`climate.${stripped}`)) {
+        return true;
+      }
+    }
+  }
+
+  // 5. HA Device Registry association check
+  if (regEntry?.device_id && haClient?.entityRegistry) {
+    const deviceEntities = [];
+    for (const [eId, reg] of haClient.entityRegistry.entries()) {
+      if (reg.device_id === regEntry.device_id && eId !== entityId) {
+        deviceEntities.push(eId);
+      }
+    }
+    if (domain === 'switch' && deviceEntities.some((id) => id.startsWith('climate.'))) {
+      return true;
+    }
+    if (domain === 'switch' && deviceEntities.some((id) => id.startsWith('light.'))) {
+      return true;
+    }
+    if (domain === 'switch' && deviceEntities.length > 0 && deviceEntities.every((id) => id.startsWith('sensor.') || id.startsWith('binary_sensor.') || id.startsWith('switch.'))) {
+      const hasSensor = deviceEntities.some((id) => id.startsWith('sensor.') || id.startsWith('binary_sensor.'));
+      if (hasSensor) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function findParentDeviceId(entityId, regEntry, allStatesMap, haClient) {
+  const domain = entityId.split('.')[0];
+  const baseName = entityId.split('.')[1] || '';
+
+  // 1. Check Device Registry
+  if (regEntry?.device_id && haClient?.entityRegistry) {
+    for (const [eId, reg] of haClient.entityRegistry.entries()) {
+      if (reg.device_id === regEntry.device_id && eId !== entityId) {
+        const otherDomain = eId.split('.')[0];
+        if (['climate', 'light', 'switch'].includes(otherDomain) && reg.entity_category !== 'config' && reg.entity_category !== 'diagnostic') {
+          return eId;
+        }
+      }
+    }
+  }
+
+  // 2. Heuristic base name
+  const stripped = baseName.replace(/_(?:child_lock|raw_power|indicator(?:_light)?|status_led|led|backlight|buzzer|alarm_enabled|audible_alarm_enabled|visual_alarm_enabled|power_outage_memory)(?:_\d+)?$/i, '');
+  if (stripped !== baseName) {
+    for (const d of ['switch', 'light', 'climate']) {
+      const candidate = `${d}.${stripped}`;
+      if (allStatesMap && allStatesMap.has(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return null;
+}
+
 export class MatterManager {
   constructor(config, haClient) {
     this.config = config;
@@ -341,16 +478,30 @@ export class MatterManager {
         const friendlyName = stateObj.attributes?.friendly_name || entityId;
         const isOn = stateObj.state === 'on';
         const isPump = isFountainOrPump(entityId, stateObj);
+        const isSub = isChildOrAuxiliaryEntity(entityId, stateObj, reg, statesMap, this.haClient);
+        const isAnnounced = this.enabledConfig[entityId]?.enabled === true || this.nodes.has(entityId);
 
-        this.discoveredDevices.set(entityId, {
-          id: entityId,
-          domain,
-          deviceKind: isPump ? 'pump' : 'switch',
-          friendlyName,
-          isOn,
-          entityId,
-        });
-        this.entityToDeviceId.set(entityId, entityId);
+        if (isSub) {
+          const parentId = findParentDeviceId(entityId, reg, statesMap, this.haClient);
+          if (parentId) {
+            this.entityToDeviceId.set(entityId, parentId);
+          }
+        }
+
+        if (!isSub || this.showAllSensors || isAnnounced) {
+          this.discoveredDevices.set(entityId, {
+            id: entityId,
+            domain,
+            deviceKind: isPump ? 'pump' : 'switch',
+            friendlyName,
+            isOn,
+            entityId,
+            isSubEntity: isSub,
+          });
+          if (!this.entityToDeviceId.has(entityId)) {
+            this.entityToDeviceId.set(entityId, entityId);
+          }
+        }
       }
 
       // 2. Process Lights
@@ -359,6 +510,15 @@ export class MatterManager {
         const isOn = stateObj.state === 'on';
         const colorModes = stateObj.attributes?.supported_color_modes || [];
         const brightness = stateObj.attributes?.brightness !== undefined ? stateObj.attributes.brightness : null;
+        const isSub = isChildOrAuxiliaryEntity(entityId, stateObj, reg, statesMap, this.haClient);
+        const isAnnounced = this.enabledConfig[entityId]?.enabled === true || this.nodes.has(entityId);
+
+        if (isSub) {
+          const parentId = findParentDeviceId(entityId, reg, statesMap, this.haClient);
+          if (parentId) {
+            this.entityToDeviceId.set(entityId, parentId);
+          }
+        }
 
         let colorTemp = null;
         if (stateObj.attributes?.color_temp_kelvin) {
@@ -396,21 +556,26 @@ export class MatterManager {
           lightType = 'dimmable';
         }
 
-        this.discoveredDevices.set(entityId, {
-          id: entityId,
-          domain,
-          deviceKind: 'light',
-          lightType,
-          friendlyName,
-          isOn,
-          brightness,
-          colorTemp,
-          xyColor,
-          minMireds,
-          maxMireds,
-          entityId,
-        });
-        this.entityToDeviceId.set(entityId, entityId);
+        if (!isSub || this.showAllSensors || isAnnounced) {
+          this.discoveredDevices.set(entityId, {
+            id: entityId,
+            domain,
+            deviceKind: 'light',
+            lightType,
+            friendlyName,
+            isOn,
+            brightness,
+            colorTemp,
+            xyColor,
+            minMireds,
+            maxMireds,
+            entityId,
+            isSubEntity: isSub,
+          });
+          if (!this.entityToDeviceId.has(entityId)) {
+            this.entityToDeviceId.set(entityId, entityId);
+          }
+        }
       }
 
       // 3. Process Climate (Thermostats & ACs)
@@ -470,7 +635,7 @@ export class MatterManager {
         const unit = stateObj.attributes?.unit_of_measurement;
         const isTemp = deviceClass === 'temperature' || /_(temperature|temp)(?:_\d+)?$/i.test(entityId);
         const isHumid = deviceClass === 'humidity' || /_(humidity|humid)(?:_\d+)?$/i.test(entityId);
-        const isBat = (deviceClass === 'battery' || /_(battery|bat)(?:_\d+)?$/i.test(entityId)) && !/voltage/i.test(entityId);
+        const isBat = (deviceClass === 'battery' || /_(battery|bat)(?:_\d+)?$/i.test(entityId)) && !/voltage|type/i.test(entityId);
         const isIllum = deviceClass === 'illuminance' || /illuminance/i.test(entityId);
         const isOcc = deviceClass === 'occupancy' || deviceClass === 'motion' || deviceClass === 'presence' || /occupancy|motion|presence/i.test(entityId);
 
@@ -481,12 +646,14 @@ export class MatterManager {
         else if (isIllum) role = 'illuminance';
         else if (isOcc) role = 'occupancy';
 
-        rawSensors.push({
-          entityId,
-          stateObj,
-          role,
-          unit,
-        });
+        if (role !== 'other') {
+          rawSensors.push({
+            entityId,
+            stateObj,
+            role,
+            unit,
+          });
+        }
       }
     }
 
@@ -543,13 +710,15 @@ export class MatterManager {
 
     // Add grouped sensors to discovered devices
     for (const [baseId, group] of groupedSensors.entries()) {
-      // By default, hide internal sensors belonging to primary devices (ACs, switches, lights)
-      if (group.belongsToPrimary && !this.showAllSensors) {
+      const isAnnounced = this.enabledConfig[baseId]?.enabled === true || this.nodes.has(baseId);
+
+      // By default, hide internal sensors belonging to primary devices (ACs, switches, lights) unless announced
+      if (group.belongsToPrimary && !this.showAllSensors && !isAnnounced) {
         continue;
       }
 
-      // Must have at least a temperature, humidity, battery or occupancy sensor (or when showing all)
-      if (!group.temp && !group.humid && !group.occ && !group.bat && !this.showAllSensors) {
+      // Must have at least a temperature, humidity, battery or occupancy sensor (or when showing all or announced)
+      if (!group.temp && !group.humid && !group.occ && !group.bat && !this.showAllSensors && !isAnnounced) {
         continue;
       }
 
@@ -576,6 +745,7 @@ export class MatterManager {
         tempUnit: group.temp?.unit || '°C',
         isMultiSensor: !!isMulti,
         isSubSensor: !!group.belongsToPrimary,
+        isSubEntity: !!group.belongsToPrimary,
       };
 
       this.discoveredDevices.set(baseId, deviceObj);
@@ -604,6 +774,7 @@ export class MatterManager {
             tempUnit: s.unit || '°C',
             isMultiSensor: false,
             isSubSensor: true,
+            isSubEntity: true,
           });
           this.entityToDeviceId.set(s.entityId, s.entityId);
         }
@@ -700,7 +871,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: '1.0',
           softwareVersion: 1,
-          softwareVersionString: '1.5.6',
+          softwareVersionString: '1.5.7',
         },
       });
 
@@ -711,7 +882,7 @@ export class MatterManager {
             nodeLabel: dev.friendlyName.slice(0, 32),
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
-            softwareVersionString: '1.5.6',
+            softwareVersionString: '1.5.7',
           },
         });
       } catch (err) {
@@ -1592,6 +1763,7 @@ export class MatterManager {
         result.push({
           ...activeEntry.info,
           isSubSensor: !!dev.isSubSensor,
+          isSubEntity: !!dev.isSubEntity,
           isMultiSensor: !!dev.isMultiSensor,
           isCommissioned: !!activeEntry.node.lifecycle.isCommissioned,
           isAnnounced: true,
@@ -1604,6 +1776,7 @@ export class MatterManager {
           friendlyName: dev.friendlyName,
           deviceKind: dev.deviceKind,
           isSubSensor: !!dev.isSubSensor,
+          isSubEntity: !!dev.isSubEntity,
           isMultiSensor: !!dev.isMultiSensor,
           lightType: dev.lightType || null,
           hvacMode: dev.hvacMode || null,

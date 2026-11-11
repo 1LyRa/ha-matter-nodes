@@ -332,6 +332,7 @@ function computeCardsRenderKey(filtered, query) {
       port: d.port,
       qr: !!d.qrCodeDataUrl,
       code: d.manualPairingCode,
+      isSubEntity: !!d.isSubEntity,
       curTemp: d.currentTemp,
       tgtTemp: d.targetTemp,
       tgtLow: d.targetTempLow,
@@ -406,7 +407,9 @@ function renderCard(dev) {
     : `<span class="pill idle">Dormant</span>`;
 
   let typePill = '<span class="pill type-badge">Device</span>';
-  if (isPump) {
+  if (dev.isSubEntity) {
+    typePill = '<span class="pill type-badge sub-entity">⚙️ Child / Config</span>';
+  } else if (isPump) {
     typePill = '<span class="pill type-badge pump">🌊 Fountain / Pump</span>';
   } else if (isSwitch) {
     typePill = '<span class="pill type-badge">Switch</span>';

@@ -422,6 +422,19 @@ body {
   border-color: rgba(56, 189, 248, 0.4);
 }
 
+.pill.type-badge.sub-entity {
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+  border: 1px dashed rgba(245, 158, 11, 0.4);
+  font-weight: 700;
+}
+
+[data-theme="dark"] .pill.type-badge.sub-entity {
+  background: rgba(245, 158, 11, 0.22);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.45);
+}
+
 .pill.announced {
   background: var(--primary-subtle);
   color: var(--primary);

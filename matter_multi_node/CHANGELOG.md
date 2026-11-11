@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.7
+
+- **Child & Auxiliary Entity Suppression**: Automatically identifies and hides secondary configuration controls, child switches, and diagnostic entities from the main device grid. Entities matching child lock (`_child_lock`), alarm controls (`_audible_alarm_enabled`, `_visual_alarm_enabled`, `_alarm_enabled`), direct power toggles (`_raw_power`), LED indicators (`_indicator_light`, `_status_led`, `_led`), and sensor device configuration switches are grouped under their parent device and hidden by default unless actively announced.
+- **HA Entity Registry Category Detection**: Utilizes Home Assistant's `entity_category: "config"` and `entity_category: "diagnostic"` classifications to reliably distinguish primary operational devices from auxiliary settings controls.
+- **Expanded Settings Toggle**: Updated dashboard settings to "Show all individual / child entities & internal sensors", allowing users to inspect and optionally announce auxiliary child switches or raw diagnostic sensors with an amber `⚙️ Child / Config` badge.
+- **Accurate Domain & Filter Tab Counts**: Switches and All tabs now reflect only physical primary devices when child suppression is active, eliminating dashboard clutter.
+
 ## 1.5.6
 
 - **Matter Pump Device (`0x0303`) for Fountains & Water Pumps**: Automatically detects fountain and pump entities (`switch.bedroom_fountain`, `switch.living_room_fountain`, switches with `device_class: pump`, or entities matching fountain/pump/насос/фонтан) and exposes them to Matter as dedicated `PumpDevice` nodes with `PumpConfigurationAndControlServer` (ConstantSpeed feature) and `OnOffServer`. In Google Home, they appear as dedicated water pumps with active power toggles instead of generic switches or plugs.
