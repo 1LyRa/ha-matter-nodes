@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.8] - 2026-11-20
+
+- **Matter 1.5 Child `ClosurePanelDevice` (`0x0231`) & `ClosureDimension` (`0x0105`) Endpoint**:
+  - Added a child `ClosurePanelDevice` (Endpoint 2) beneath `ClosureDevice` (Endpoint 1) with `ClosureDimensionServer` (`Positioning` and `Translation` features, binary `10000` resolution / step value) so Matter controllers that require a child panel dimension axis can discover and render interactive Open/Close controls.
+  - Configured semantic panel tags from the `ClosurePanel` namespace (`0x45` / `69`): `ClosurePanelTag.Sliding` (`Leftward`) for gates, doors, windows, and barriers, and `ClosurePanelTag.Lift` (`Downward`) for garage doors and coverings.
+  - Added full bidirectional synchronization between `ClosureControl` (`MoveTo` / `Stop` / HA state updates) and `ClosureDimension` (`SetTarget` / `Step` / `currentState` / `targetState`).
+
 ## [1.7.7] - 2026-11-20
 
 - **Matter 1.5 `ClosureDevice` (`0x0230`) & Gate Support**:

@@ -1,4 +1,4 @@
-import { ServerNode, Environment, ClosureTag } from '@matter/main';
+import { ServerNode, Environment, ClosureTag, ClosurePanelTag } from '@matter/main';
 import {
   OnOffPlugInUnitDevice,
   TemperatureSensorDevice,
@@ -12,6 +12,7 @@ import {
   AirPurifierDevice,
   FanDevice,
   ClosureDevice,
+  ClosurePanelDevice,
 } from '@matter/main/devices';
 import { PowerSourceServer } from '@matter/main/behaviors/power-source';
 import { OnOffServer } from '@matter/main/behaviors/on-off';
@@ -27,6 +28,7 @@ import { Pm10ConcentrationMeasurementServer } from '@matter/main/behaviors/pm10-
 import { TemperatureMeasurementServer } from '@matter/main/behaviors/temperature-measurement';
 import { RelativeHumidityMeasurementServer } from '@matter/main/behaviors/relative-humidity-measurement';
 import { ClosureControlServer } from '@matter/main/behaviors/closure-control';
+import { ClosureDimensionServer } from '@matter/main/behaviors/closure-dimension';
 import {
   Thermostat,
   FanControl,
@@ -37,6 +39,7 @@ import {
   Pm25ConcentrationMeasurement,
   Pm10ConcentrationMeasurement,
   ClosureControl,
+  ClosureDimension,
 } from '@matter/main/clusters';
 import { StatusCode, StatusResponseError } from '@matter/main/types';
 import QRCode from 'qrcode';
@@ -523,6 +526,38 @@ function mapHaStateToClosure(domain, rawState) {
     countdownTime: 0,
     currentErrorList: [],
   };
+}
+
+function getClosurePanelMeta(closureType) {
+  if (closureType === 'garage_door' || closureType === 'covering') {
+    return {
+      tag: ClosurePanelTag.Lift,
+      translationDirection: ClosureDimension.TranslationDirection.Downward,
+    };
+  }
+  return {
+    tag: ClosurePanelTag.Sliding,
+    translationDirection: ClosureDimension.TranslationDirection.Leftward,
+  };
+}
+
+function mapClosureStateToDimension(closureState, prevDimPos = null) {
+  if (!closureState) {
+    return { currentPos: null, targetPos: null };
+  }
+  if (closureState.position === ClosureControl.CurrentPosition.FullyClosed) {
+    return { currentPos: 10000, targetPos: 10000 };
+  }
+  if (closureState.position === ClosureControl.CurrentPosition.FullyOpened) {
+    return { currentPos: 0, targetPos: 0 };
+  }
+  if (closureState.isMoving) {
+    return {
+      currentPos: prevDimPos,
+      targetPos: closureState.targetPosition === ClosureControl.TargetPosition.MoveToFullyOpen ? 0 : 10000,
+    };
+  }
+  return { currentPos: null, targetPos: null };
 }
 
 function mapPm25ToMatterAirQuality(pm25, aqiState) {
@@ -1731,7 +1766,7 @@ export class MatterManager {
           await entry.node.set({
             basicInformation: {
               hardwareVersionString: haVerString,
-              softwareVersionString: '1.7.7',
+              softwareVersionString: '1.7.8',
             },
           });
         } catch (_) {}
@@ -1834,7 +1869,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: haVerString,
           softwareVersion: 1,
-          softwareVersionString: '1.7.7',
+          softwareVersionString: '1.7.8',
         },
       });
 
@@ -1846,7 +1881,7 @@ export class MatterManager {
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
             hardwareVersionString: haVerString,
-            softwareVersionString: '1.7.7',
+            softwareVersionString: '1.7.8',
           },
         });
       } catch (err) {
@@ -3018,6 +3053,50 @@ export class MatterManager {
         const haClient = this.haClient;
         const closureTag = getClosureTagForType(dev.closureType);
 
+        const scheduleMovingFallback = () => {
+          clearMovingTimer();
+          movingTimer = setTimeout(async () => {
+            movingTimer = null;
+            try {
+              const cur = endpoints.closure?.state?.closureControl;
+              if (cur && cur.mainState === ClosureControl.MainState.Moving) {
+                const curPos = cur.overallCurrentState?.position ?? null;
+                let alignedTarget = null;
+                if (curPos === ClosureControl.CurrentPosition.FullyOpened) {
+                  alignedTarget = ClosureControl.TargetPosition.MoveToFullyOpen;
+                } else if (curPos === ClosureControl.CurrentPosition.FullyClosed) {
+                  alignedTarget = ClosureControl.TargetPosition.MoveToFullyClosed;
+                }
+                await endpoints.closure.set({
+                  closureControl: {
+                    mainState: ClosureControl.MainState.Stopped,
+                    countdownTime: 0,
+                    overallTargetState: alignedTarget !== null ? { position: alignedTarget } : null,
+                  },
+                });
+                if (endpoints.panel) {
+                  const panelCurPos = endpoints.panel.state.closureDimension?.currentState?.position ?? null;
+                  await endpoints.panel.set({
+                    closureDimension: {
+                      targetState: panelCurPos !== null ? { position: panelCurPos } : null,
+                    },
+                  });
+                }
+              }
+            } catch (err) {
+              console.warn(`[Matter Node: ${dev.friendlyName}] Closure moving fallback error:`, err.message);
+            }
+          }, 30000);
+        };
+
+        const sendHaMoveCommand = async (wantOpen) => {
+          if (dev.domain === 'lock') {
+            await haClient.callService('lock', wantOpen ? 'unlock' : 'lock', dev.entityId);
+          } else if (dev.domain === 'cover') {
+            await haClient.callService('cover', wantOpen ? 'open_cover' : 'close_cover', dev.entityId);
+          }
+        };
+
         class CustomClosureControlServer extends ClosureControlServer.with(ClosureControl.Feature.Positioning) {
           async moveTo(request) {
             const pos = request?.position ?? this.state.overallTargetState?.position ?? null;
@@ -3040,6 +3119,14 @@ export class MatterManager {
 
             this.state.overallTargetState = { position: targetPos };
 
+            if (endpoints.panel) {
+              await endpoints.panel.set({
+                closureDimension: {
+                  targetState: { position: wantOpen ? 0 : 10000 },
+                },
+              });
+            }
+
             const currentPos = this.state.overallCurrentState?.position;
             const alreadyAtTarget =
               (wantOpen && currentPos === ClosureControl.CurrentPosition.FullyOpened) ||
@@ -3048,49 +3135,92 @@ export class MatterManager {
             if (!alreadyAtTarget) {
               this.state.mainState = ClosureControl.MainState.Moving;
               this.state.countdownTime = null;
-              clearMovingTimer();
-              movingTimer = setTimeout(async () => {
-                movingTimer = null;
-                try {
-                  const cur = endpoints.closure?.state?.closureControl;
-                  if (cur && cur.mainState === ClosureControl.MainState.Moving) {
-                    const curPos = cur.overallCurrentState?.position ?? null;
-                    let alignedTarget = null;
-                    if (curPos === ClosureControl.CurrentPosition.FullyOpened) {
-                      alignedTarget = ClosureControl.TargetPosition.MoveToFullyOpen;
-                    } else if (curPos === ClosureControl.CurrentPosition.FullyClosed) {
-                      alignedTarget = ClosureControl.TargetPosition.MoveToFullyClosed;
-                    }
-                    await endpoints.closure.set({
-                      closureControl: {
-                        mainState: ClosureControl.MainState.Stopped,
-                        countdownTime: 0,
-                        overallTargetState: alignedTarget !== null ? { position: alignedTarget } : null,
-                      },
-                    });
-                  }
-                } catch (err) {
-                  console.warn(`[Matter Node: ${dev.friendlyName}] Closure moving fallback error:`, err.message);
-                }
-              }, 30000);
+              scheduleMovingFallback();
             }
 
             console.log(`[Matter Node: ${dev.friendlyName}] Closure moveTo command: ${wantOpen ? 'OPEN' : 'CLOSE'} (pos=${pos})`);
-            if (dev.domain === 'lock') {
-              await haClient.callService('lock', wantOpen ? 'unlock' : 'lock', dev.entityId);
-            } else if (dev.domain === 'cover') {
-              await haClient.callService('cover', wantOpen ? 'open_cover' : 'close_cover', dev.entityId);
-            }
+            await sendHaMoveCommand(wantOpen);
           }
 
           async stop() {
             clearMovingTimer();
             this.state.mainState = ClosureControl.MainState.Stopped;
             this.state.countdownTime = 0;
+            if (endpoints.panel) {
+              const panelCurPos = endpoints.panel.state.closureDimension?.currentState?.position ?? null;
+              await endpoints.panel.set({
+                closureDimension: {
+                  targetState: panelCurPos !== null ? { position: panelCurPos } : null,
+                },
+              });
+            }
             console.log(`[Matter Node: ${dev.friendlyName}] Closure stop command`);
             if (dev.domain === 'cover') {
               await haClient.callService('cover', 'stop_cover', dev.entityId);
             }
+          }
+        }
+
+        class CustomClosureDimensionServer extends ClosureDimensionServer.with(
+          ClosureDimension.Feature.Positioning,
+          ClosureDimension.Feature.Translation
+        ) {
+          async setTarget(request) {
+            let targetDimPos;
+            if (request?.position !== undefined) {
+              if (typeof request.position !== 'number' || request.position < 0 || request.position > 10000) {
+                throw new StatusResponseError('Position out of range', StatusCode.ConstraintError);
+              }
+              targetDimPos = request.position < 5000 ? 0 : 10000;
+            } else {
+              const fallbackPos = this.state.targetState?.position ?? null;
+              if (fallbackPos === null) {
+                return;
+              }
+              targetDimPos = fallbackPos;
+            }
+
+            const wantOpen = targetDimPos === 0;
+            this.state.targetState = { position: targetDimPos };
+
+            const targetPos = wantOpen
+              ? ClosureControl.TargetPosition.MoveToFullyOpen
+              : ClosureControl.TargetPosition.MoveToFullyClosed;
+            const currentPos = endpoints.closure?.state?.closureControl?.overallCurrentState?.position ?? null;
+            const alreadyAtTarget =
+              (wantOpen && currentPos === ClosureControl.CurrentPosition.FullyOpened) ||
+              (!wantOpen && currentPos === ClosureControl.CurrentPosition.FullyClosed);
+
+            const ctrlUpdates = {
+              overallTargetState: { position: targetPos },
+            };
+            if (!alreadyAtTarget) {
+              ctrlUpdates.mainState = ClosureControl.MainState.Moving;
+              ctrlUpdates.countdownTime = null;
+              scheduleMovingFallback();
+            }
+            if (endpoints.closure) {
+              await endpoints.closure.set({ closureControl: ctrlUpdates });
+            }
+
+            console.log(
+              `[Matter Node: ${dev.friendlyName}] ClosureDimension setTarget command: ${wantOpen ? 'OPEN' : 'CLOSE'} (rawPos=${request?.position}, rounded=${targetDimPos})`
+            );
+            await sendHaMoveCommand(wantOpen);
+          }
+
+          async step(request) {
+            if (
+              !request ||
+              (request.direction !== ClosureDimension.StepDirection.Decrease &&
+                request.direction !== ClosureDimension.StepDirection.Increase) ||
+              typeof request.numberOfSteps !== 'number' ||
+              request.numberOfSteps < 1
+            ) {
+              throw new StatusResponseError('Invalid step request', StatusCode.ConstraintError);
+            }
+            const targetDimPos = request.direction === ClosureDimension.StepDirection.Decrease ? 0 : 10000;
+            await this.setTarget({ position: targetDimPos });
           }
         }
 
@@ -3113,6 +3243,23 @@ export class MatterManager {
           },
         });
         endpoints.closure = endpoint;
+
+        const panelMeta = getClosurePanelMeta(dev.closureType);
+        const initialDim = mapClosureStateToDimension(initialClosure, null);
+        const panelEndpoint = await endpoint.add(ClosurePanelDevice.with(CustomClosureDimensionServer), {
+          id: 'panel',
+          descriptor: {
+            tagList: [panelMeta.tag],
+          },
+          closureDimension: {
+            currentState: initialDim.currentPos !== null ? { position: initialDim.currentPos } : null,
+            targetState: initialDim.targetPos !== null ? { position: initialDim.targetPos } : null,
+            resolution: 10000,
+            stepValue: 10000,
+            translationDirection: panelMeta.translationDirection,
+          },
+        });
+        endpoints.panel = panelEndpoint;
 
         updateFromHA = async (newDev) => {
           const next = newDev.closureState || mapHaStateToClosure(newDev.domain, newDev.rawState);
@@ -3152,6 +3299,23 @@ export class MatterManager {
 
           if (Object.keys(ccUpdates).length > 0) {
             await endpoint.set({ closureControl: ccUpdates });
+          }
+
+          if (endpoints.panel) {
+            const curDim = endpoints.panel.state.closureDimension;
+            const prevDimCurrent = curDim.currentState?.position ?? null;
+            const prevDimTarget = curDim.targetState?.position ?? null;
+            const nextDim = mapClosureStateToDimension(next, prevDimCurrent);
+            const dimUpdates = {};
+            if (prevDimCurrent !== nextDim.currentPos) {
+              dimUpdates.currentState = nextDim.currentPos !== null ? { position: nextDim.currentPos } : null;
+            }
+            if (prevDimTarget !== nextDim.targetPos) {
+              dimUpdates.targetState = nextDim.targetPos !== null ? { position: nextDim.targetPos } : null;
+            }
+            if (Object.keys(dimUpdates).length > 0) {
+              await endpoints.panel.set({ closureDimension: dimUpdates });
+            }
           }
 
           if (info) {
