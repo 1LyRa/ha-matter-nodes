@@ -1,4 +1,4 @@
-import { ServerNode, Environment } from '@matter/main';
+import { ServerNode, Environment, ClosureTag } from '@matter/main';
 import {
   OnOffPlugInUnitDevice,
   TemperatureSensorDevice,
@@ -11,6 +11,7 @@ import {
   PumpDevice,
   AirPurifierDevice,
   FanDevice,
+  ClosureDevice,
 } from '@matter/main/devices';
 import { PowerSourceServer } from '@matter/main/behaviors/power-source';
 import { OnOffServer } from '@matter/main/behaviors/on-off';
@@ -25,6 +26,7 @@ import { Pm25ConcentrationMeasurementServer } from '@matter/main/behaviors/pm25-
 import { Pm10ConcentrationMeasurementServer } from '@matter/main/behaviors/pm10-concentration-measurement';
 import { TemperatureMeasurementServer } from '@matter/main/behaviors/temperature-measurement';
 import { RelativeHumidityMeasurementServer } from '@matter/main/behaviors/relative-humidity-measurement';
+import { ClosureControlServer } from '@matter/main/behaviors/closure-control';
 import {
   Thermostat,
   FanControl,
@@ -34,7 +36,9 @@ import {
   AirQuality,
   Pm25ConcentrationMeasurement,
   Pm10ConcentrationMeasurement,
+  ClosureControl,
 } from '@matter/main/clusters';
+import { StatusCode, StatusResponseError } from '@matter/main/types';
 import QRCode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
@@ -380,6 +384,145 @@ function isAirPurifier(entityId, stateObj) {
     'air_cleaner', 'aircleaner', 'очиститель', 'воздухоочиститель'
   ];
   return patterns.some((p) => lowerId.includes(p) || friendlyName.includes(p));
+}
+
+function detectClosureType(entityId, stateObj, regEntry, haClient) {
+  const domain = (entityId || '').split('.')[0];
+  const deviceClass = (stateObj?.attributes?.device_class || '').toLowerCase();
+  const icon = (stateObj?.attributes?.icon || '').toLowerCase();
+  const lowerId = (entityId || '').toLowerCase();
+  const lowerName = (stateObj?.attributes?.friendly_name || '').toLowerCase();
+  const regDevice = regEntry?.device_id ? haClient?.deviceRegistry?.get(regEntry.device_id) : null;
+  const devName = (regDevice?.name_by_user || regDevice?.name || '').toLowerCase();
+  const devModel = (regDevice?.model || '').toLowerCase();
+
+  // Check Gate first (so entities like lock.garage_door_opener named "Gate" with mdi:gate resolve to Gate)
+  if (
+    deviceClass === 'gate' ||
+    icon.includes('gate') ||
+    /\b(?:gate|ворота|kapija)\b/i.test(lowerName) ||
+    /\b(?:gate|ворота|kapija)\b/i.test(devName) ||
+    /\bgate\b/i.test(lowerId)
+  ) {
+    return 'gate';
+  }
+  if (
+    deviceClass === 'garage' ||
+    icon.includes('garage') ||
+    /garage/i.test(lowerName) ||
+    /garage/i.test(devName) ||
+    /garage/i.test(lowerId) ||
+    /garage/i.test(devModel)
+  ) {
+    return 'garage_door';
+  }
+  if (
+    deviceClass === 'door' ||
+    domain === 'lock' ||
+    /\bdoor\b/i.test(lowerName) ||
+    /\bdoor\b/i.test(devName) ||
+    /\bdoor\b/i.test(lowerId)
+  ) {
+    return 'door';
+  }
+  if (deviceClass === 'window') {
+    return 'window';
+  }
+  if (['shade', 'blind', 'curtain', 'shutter', 'awning'].includes(deviceClass)) {
+    return 'covering';
+  }
+  return 'barrier';
+}
+
+function getClosureTagForType(closureType) {
+  switch (closureType) {
+    case 'gate':
+      return ClosureTag.Gate;
+    case 'garage_door':
+      return ClosureTag.GarageDoor;
+    case 'door':
+      return ClosureTag.Door;
+    case 'window':
+      return ClosureTag.Window;
+    case 'covering':
+      return ClosureTag.Covering;
+    default:
+      return ClosureTag.Barrier;
+  }
+}
+
+function mapHaStateToClosure(domain, rawState) {
+  const s = String(rawState || '').toLowerCase();
+  if ((domain === 'lock' && s === 'locked') || (domain === 'cover' && s === 'closed')) {
+    return {
+      isOpen: false,
+      isMoving: false,
+      position: ClosureControl.CurrentPosition.FullyClosed,
+      targetPosition: ClosureControl.TargetPosition.MoveToFullyClosed,
+      secureState: true,
+      mainState: ClosureControl.MainState.Stopped,
+      countdownTime: 0,
+      currentErrorList: [],
+    };
+  }
+  if ((domain === 'lock' && (s === 'unlocked' || s === 'open')) || (domain === 'cover' && s === 'open')) {
+    return {
+      isOpen: true,
+      isMoving: false,
+      position: ClosureControl.CurrentPosition.FullyOpened,
+      targetPosition: ClosureControl.TargetPosition.MoveToFullyOpen,
+      secureState: false,
+      mainState: ClosureControl.MainState.Stopped,
+      countdownTime: 0,
+      currentErrorList: [],
+    };
+  }
+  if (s === 'locking' || s === 'closing') {
+    return {
+      isOpen: true,
+      isMoving: true,
+      position: ClosureControl.CurrentPosition.PartiallyOpened,
+      targetPosition: ClosureControl.TargetPosition.MoveToFullyClosed,
+      secureState: false,
+      mainState: ClosureControl.MainState.Moving,
+      countdownTime: null,
+      currentErrorList: [],
+    };
+  }
+  if (s === 'unlocking' || s === 'opening') {
+    return {
+      isOpen: true,
+      isMoving: true,
+      position: ClosureControl.CurrentPosition.PartiallyOpened,
+      targetPosition: ClosureControl.TargetPosition.MoveToFullyOpen,
+      secureState: false,
+      mainState: ClosureControl.MainState.Moving,
+      countdownTime: null,
+      currentErrorList: [],
+    };
+  }
+  if (s === 'jammed') {
+    return {
+      isOpen: true,
+      isMoving: false,
+      position: ClosureControl.CurrentPosition.PartiallyOpened,
+      targetPosition: null,
+      secureState: false,
+      mainState: ClosureControl.MainState.Error,
+      countdownTime: null,
+      currentErrorList: [ClosureControl.ClosureError.PhysicallyBlocked],
+    };
+  }
+  return {
+    isOpen: false,
+    isMoving: false,
+    position: null,
+    targetPosition: null,
+    secureState: null,
+    mainState: ClosureControl.MainState.Stopped,
+    countdownTime: 0,
+    currentErrorList: [],
+  };
 }
 
 function mapPm25ToMatterAirQuality(pm25, aqiState) {
@@ -958,7 +1101,7 @@ export class MatterManager {
       // Track primary device affiliations from HA Entity Registry (excluding secondary/child entities)
       const reg = this.haClient?.entityRegistry?.get(entityId);
       const isSub = isChildOrAuxiliaryEntity(entityId, stateObj, reg, statesMap, this.haClient);
-      if (!isSub && (domain === 'switch' || domain === 'input_boolean' || domain === 'light' || domain === 'climate')) {
+      if (!isSub && (domain === 'switch' || domain === 'input_boolean' || domain === 'light' || domain === 'climate' || domain === 'cover' || domain === 'lock')) {
         if (reg?.device_id) primaryDeviceIds.add(reg.device_id);
         primaryBaseIds.add(baseName);
       }
@@ -1187,6 +1330,52 @@ export class MatterManager {
             fanMode,
             presetModes,
             entityId,
+            isSubEntity: isSub,
+          });
+          if (!this.entityToDeviceId.has(entityId)) {
+            this.entityToDeviceId.set(entityId, entityId);
+          }
+        }
+      }
+
+      // 3c. Process Gates, Garage Doors, Doors & Covers (Matter 1.5 ClosureDevice)
+      if (domain === 'cover' || domain === 'lock') {
+        if (this.entityToDeviceId.has(entityId)) {
+          continue;
+        }
+        const regDevice = reg?.device_id ? this.haClient?.deviceRegistry?.get(reg.device_id) : null;
+        const regDeviceName = regDevice?.name_by_user || regDevice?.name || null;
+        const rawFriendly = stateObj.attributes?.friendly_name || entityId;
+        const friendlyName = cleanDeviceFriendlyName(rawFriendly, regDeviceName);
+        const closureType = detectClosureType(entityId, stateObj, reg, this.haClient);
+        const closureState = mapHaStateToClosure(domain, stateObj.state);
+        const isAvailable = isStateAvailable(stateObj.state);
+        const isAnnounced = this.enabledConfig[entityId]?.enabled === true || this.nodes.has(entityId);
+
+        if (isSub) {
+          const parentId = findParentDeviceId(entityId, reg, statesMap, this.haClient);
+          if (parentId) {
+            this.entityToDeviceId.set(entityId, parentId);
+          }
+        }
+
+        if (!isSub || this.showAllSensors || isAnnounced) {
+          const entityStates = new Map();
+          entityStates.set(entityId, stateObj.state);
+          this.discoveredDevices.set(entityId, {
+            id: entityId,
+            domain,
+            deviceKind: 'closure',
+            closureType,
+            friendlyName,
+            entityId,
+            isOn: closureState.isOpen,
+            isOpen: closureState.isOpen,
+            isMoving: closureState.isMoving,
+            closureState,
+            isAvailable,
+            rawState: stateObj.state,
+            entityStates,
             isSubEntity: isSub,
           });
           if (!this.entityToDeviceId.has(entityId)) {
@@ -1542,7 +1731,7 @@ export class MatterManager {
           await entry.node.set({
             basicInformation: {
               hardwareVersionString: haVerString,
-              softwareVersionString: '1.7.6',
+              softwareVersionString: '1.7.7',
             },
           });
         } catch (_) {}
@@ -1609,6 +1798,8 @@ export class MatterManager {
         primaryDeviceType = lightDeviceClass.deviceType;
       } else if (dev.deviceKind === 'climate') {
         primaryDeviceType = ThermostatDevice.deviceType;
+      } else if (dev.deviceKind === 'closure') {
+        primaryDeviceType = ClosureDevice.deviceType;
       } else {
         primaryDeviceType = dev.tempEntity ? TemperatureSensorDevice.deviceType : HumiditySensorDevice.deviceType;
       }
@@ -1643,7 +1834,7 @@ export class MatterManager {
           hardwareVersion: 1,
           hardwareVersionString: haVerString,
           softwareVersion: 1,
-          softwareVersionString: '1.7.6',
+          softwareVersionString: '1.7.7',
         },
       });
 
@@ -1655,7 +1846,7 @@ export class MatterManager {
             productName: dev.friendlyName.slice(0, 32),
             productLabel: dev.friendlyName.slice(0, 64),
             hardwareVersionString: haVerString,
-            softwareVersionString: '1.7.6',
+            softwareVersionString: '1.7.7',
           },
         });
       } catch (err) {
@@ -1665,6 +1856,7 @@ export class MatterManager {
       let info = null;
       const endpoints = {};
       let updateFromHA = async () => {};
+      let cleanup = null;
 
       // Build endpoints depending on deviceKind
       if (dev.deviceKind === 'switch' || dev.deviceKind === 'pump') {
@@ -2813,6 +3005,180 @@ export class MatterManager {
             updatingFromHA = false;
           }
         };
+      } else if (dev.deviceKind === 'closure') {
+        let movingTimer = null;
+        const clearMovingTimer = () => {
+          if (movingTimer) {
+            clearTimeout(movingTimer);
+            movingTimer = null;
+          }
+        };
+        cleanup = () => clearMovingTimer();
+
+        const haClient = this.haClient;
+        const closureTag = getClosureTagForType(dev.closureType);
+
+        class CustomClosureControlServer extends ClosureControlServer.with(ClosureControl.Feature.Positioning) {
+          async moveTo(request) {
+            const pos = request?.position ?? this.state.overallTargetState?.position ?? null;
+            if (pos === null || pos === undefined) {
+              return;
+            }
+            if (
+              pos === ClosureControl.TargetPosition.MoveToPedestrianPosition ||
+              pos === ClosureControl.TargetPosition.MoveToVentilationPosition
+            ) {
+              throw new StatusResponseError('Unsupported target position', StatusCode.ConstraintError);
+            }
+
+            const wantOpen =
+              pos === ClosureControl.TargetPosition.MoveToFullyOpen ||
+              pos === ClosureControl.TargetPosition.MoveToSignaturePosition;
+            const targetPos = wantOpen
+              ? ClosureControl.TargetPosition.MoveToFullyOpen
+              : ClosureControl.TargetPosition.MoveToFullyClosed;
+
+            this.state.overallTargetState = { position: targetPos };
+
+            const currentPos = this.state.overallCurrentState?.position;
+            const alreadyAtTarget =
+              (wantOpen && currentPos === ClosureControl.CurrentPosition.FullyOpened) ||
+              (!wantOpen && currentPos === ClosureControl.CurrentPosition.FullyClosed);
+
+            if (!alreadyAtTarget) {
+              this.state.mainState = ClosureControl.MainState.Moving;
+              this.state.countdownTime = null;
+              clearMovingTimer();
+              movingTimer = setTimeout(async () => {
+                movingTimer = null;
+                try {
+                  const cur = endpoints.closure?.state?.closureControl;
+                  if (cur && cur.mainState === ClosureControl.MainState.Moving) {
+                    const curPos = cur.overallCurrentState?.position ?? null;
+                    let alignedTarget = null;
+                    if (curPos === ClosureControl.CurrentPosition.FullyOpened) {
+                      alignedTarget = ClosureControl.TargetPosition.MoveToFullyOpen;
+                    } else if (curPos === ClosureControl.CurrentPosition.FullyClosed) {
+                      alignedTarget = ClosureControl.TargetPosition.MoveToFullyClosed;
+                    }
+                    await endpoints.closure.set({
+                      closureControl: {
+                        mainState: ClosureControl.MainState.Stopped,
+                        countdownTime: 0,
+                        overallTargetState: alignedTarget !== null ? { position: alignedTarget } : null,
+                      },
+                    });
+                  }
+                } catch (err) {
+                  console.warn(`[Matter Node: ${dev.friendlyName}] Closure moving fallback error:`, err.message);
+                }
+              }, 30000);
+            }
+
+            console.log(`[Matter Node: ${dev.friendlyName}] Closure moveTo command: ${wantOpen ? 'OPEN' : 'CLOSE'} (pos=${pos})`);
+            if (dev.domain === 'lock') {
+              await haClient.callService('lock', wantOpen ? 'unlock' : 'lock', dev.entityId);
+            } else if (dev.domain === 'cover') {
+              await haClient.callService('cover', wantOpen ? 'open_cover' : 'close_cover', dev.entityId);
+            }
+          }
+
+          async stop() {
+            clearMovingTimer();
+            this.state.mainState = ClosureControl.MainState.Stopped;
+            this.state.countdownTime = 0;
+            console.log(`[Matter Node: ${dev.friendlyName}] Closure stop command`);
+            if (dev.domain === 'cover') {
+              await haClient.callService('cover', 'stop_cover', dev.entityId);
+            }
+          }
+        }
+
+        const initialClosure = dev.closureState || mapHaStateToClosure(dev.domain, dev.rawState);
+        const endpoint = await node.add(ClosureDevice.with(CustomClosureControlServer), {
+          id: 'closure',
+          descriptor: {
+            tagList: [closureTag],
+          },
+          closureControl: {
+            mainState: initialClosure.mainState,
+            currentErrorList: initialClosure.currentErrorList,
+            countdownTime: initialClosure.countdownTime,
+            overallCurrentState: {
+              position: initialClosure.position,
+              secureState: initialClosure.secureState,
+            },
+            overallTargetState:
+              initialClosure.targetPosition !== null ? { position: initialClosure.targetPosition } : null,
+          },
+        });
+        endpoints.closure = endpoint;
+
+        updateFromHA = async (newDev) => {
+          const next = newDev.closureState || mapHaStateToClosure(newDev.domain, newDev.rawState);
+          if (!next.isMoving) {
+            clearMovingTimer();
+          }
+
+          const cur = endpoint.state.closureControl;
+          const prevMainState = cur.mainState;
+          const prevPos = cur.overallCurrentState?.position ?? null;
+          const prevSecure = cur.overallCurrentState?.secureState ?? null;
+          const prevTarget = cur.overallTargetState?.position ?? null;
+          const prevErrors = Array.isArray(cur.currentErrorList) ? [...cur.currentErrorList] : [];
+
+          const ccUpdates = {};
+          if (prevMainState !== next.mainState) {
+            ccUpdates.mainState = next.mainState;
+          }
+          if (cur.countdownTime !== next.countdownTime) {
+            ccUpdates.countdownTime = next.countdownTime;
+          }
+          if (prevPos !== next.position || prevSecure !== next.secureState) {
+            ccUpdates.overallCurrentState = {
+              position: next.position,
+              secureState: next.secureState,
+            };
+          }
+          if (prevTarget !== next.targetPosition) {
+            ccUpdates.overallTargetState = next.targetPosition !== null ? { position: next.targetPosition } : null;
+          }
+          if (
+            prevErrors.length !== next.currentErrorList.length ||
+            prevErrors.some((val, idx) => val !== next.currentErrorList[idx])
+          ) {
+            ccUpdates.currentErrorList = next.currentErrorList;
+          }
+
+          if (Object.keys(ccUpdates).length > 0) {
+            await endpoint.set({ closureControl: ccUpdates });
+          }
+
+          if (info) {
+            info.isOpen = next.isOpen;
+            info.isMoving = next.isMoving;
+            info.isOn = next.isOpen;
+            info.closureState = next;
+            info.rawState = newDev.rawState;
+          }
+
+          try {
+            const shouldEmitSecure = next.secureState !== null && prevSecure !== next.secureState;
+            const shouldEmitMoved =
+              prevMainState === ClosureControl.MainState.Moving &&
+              next.mainState === ClosureControl.MainState.Stopped;
+            if (shouldEmitSecure || shouldEmitMoved) {
+              await endpoint.act((agent) => {
+                if (shouldEmitSecure) {
+                  agent.closureControl.events.secureStateChanged.emit({ secureValue: next.secureState }, agent.context);
+                }
+                if (shouldEmitMoved) {
+                  agent.closureControl.events.movementCompleted.emit(undefined, agent.context);
+                }
+              });
+            }
+          } catch (_) {}
+        };
       }
 
       const pairingCodes = node.state.commissioning.pairingCodes || {};
@@ -2837,6 +3203,10 @@ export class MatterManager {
         entityId: dev.entityId || deviceId,
         friendlyName: dev.friendlyName,
         deviceKind: dev.deviceKind,
+        closureType: dev.closureType || null,
+        isOpen: !!dev.isOpen,
+        isMoving: !!dev.isMoving,
+        closureState: dev.closureState || null,
         lightType: dev.lightType || null,
         hvacMode: dev.hvacMode || null,
         hvacAction: dev.hvacAction || null,
@@ -2881,6 +3251,7 @@ export class MatterManager {
         endpoints,
         info,
         updateFromHA,
+        cleanup,
         offlineTimer: null,
         isTransitioning: false,
       };
@@ -2937,6 +3308,7 @@ export class MatterManager {
         clearTimeout(entry.offlineTimer);
         entry.offlineTimer = null;
       }
+      if (typeof entry.cleanup === 'function') entry.cleanup();
       console.log(`[Matter Manager] Stopping Matter node for ${deviceId}...`);
       try {
         await entry.node.close();
@@ -2975,6 +3347,7 @@ export class MatterManager {
         clearTimeout(entry.offlineTimer);
         entry.offlineTimer = null;
       }
+      if (typeof entry.cleanup === 'function') entry.cleanup();
       try {
         await entry.node.close();
       } catch (err) {
@@ -3234,6 +3607,19 @@ export class MatterManager {
       if (change.attributes?.preset_mode !== undefined) {
         dev.fanMode = change.attributes.preset_mode;
       }
+    } else if (dev.deviceKind === 'closure') {
+      const nextClosure = mapHaStateToClosure(dev.domain, change.raw_state);
+      dev.closureState = nextClosure;
+      dev.isOpen = nextClosure.isOpen;
+      dev.isMoving = nextClosure.isMoving;
+      dev.isOn = nextClosure.isOpen;
+      if (activeEntry?.info) {
+        activeEntry.info.closureState = nextClosure;
+        activeEntry.info.isOpen = nextClosure.isOpen;
+        activeEntry.info.isMoving = nextClosure.isMoving;
+        activeEntry.info.isOn = nextClosure.isOpen;
+        activeEntry.info.rawState = dev.rawState;
+      }
     }
 
     // Update live Matter node if active and online
@@ -3251,6 +3637,10 @@ export class MatterManager {
       if (activeEntry) {
         result.push({
           ...activeEntry.info,
+          closureType: activeEntry.info.closureType ?? dev.closureType ?? null,
+          isOpen: activeEntry.info.isOpen ?? !!dev.isOpen,
+          isMoving: activeEntry.info.isMoving ?? !!dev.isMoving,
+          closureState: activeEntry.info.closureState ?? dev.closureState ?? null,
           isSubSensor: !!dev.isSubSensor,
           isSubEntity: !!dev.isSubEntity,
           isMultiSensor: !!dev.isMultiSensor,
@@ -3275,6 +3665,10 @@ export class MatterManager {
           entityId: dev.entityId || deviceId,
           friendlyName: dev.friendlyName,
           deviceKind: dev.deviceKind,
+          closureType: dev.closureType || null,
+          isOpen: !!dev.isOpen,
+          isMoving: !!dev.isMoving,
+          closureState: dev.closureState || null,
           isSubSensor: !!dev.isSubSensor,
           isSubEntity: !!dev.isSubEntity,
           isMultiSensor: !!dev.isMultiSensor,
@@ -3376,6 +3770,16 @@ export class MatterManager {
       return await this.haClient.setEntityState(dev.entityId, newState);
     }
 
+    if (dev.deviceKind === 'closure') {
+      const wantOpen = !dev.isOpen;
+      if (dev.domain === 'lock') {
+        return await this.haClient.callService('lock', wantOpen ? 'unlock' : 'lock', dev.entityId);
+      } else if (dev.domain === 'cover') {
+        return await this.haClient.callService('cover', wantOpen ? 'open_cover' : 'close_cover', dev.entityId);
+      }
+      return false;
+    }
+
     return false;
   }
 
@@ -3386,6 +3790,7 @@ export class MatterManager {
         clearTimeout(entry.offlineTimer);
         entry.offlineTimer = null;
       }
+      if (typeof entry.cleanup === 'function') entry.cleanup();
       try {
         await entry.node.close();
       } catch (err) {

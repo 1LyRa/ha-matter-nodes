@@ -32,6 +32,7 @@ const countAll = document.getElementById('countAll');
 const countSwitches = document.getElementById('countSwitches');
 const countLights = document.getElementById('countLights');
 const countClimate = document.getElementById('countClimate');
+const countClosures = document.getElementById('countClosures');
 const countSensors = document.getElementById('countSensors');
 const countActive = document.getElementById('countActive');
 const countInactive = document.getElementById('countInactive');
@@ -281,6 +282,7 @@ async function fetchNodes() {
     const switchCount = allDevices.filter((d) => d.deviceKind === 'switch' || d.deviceKind === 'pump').length;
     const lightCount = allDevices.filter((d) => d.deviceKind === 'light').length;
     const climateCount = allDevices.filter((d) => d.deviceKind === 'climate' || d.deviceKind === 'purifier' || d.deviceKind === 'fan').length;
+    const closureCount = allDevices.filter((d) => d.deviceKind === 'closure').length;
     const sensorCount = allDevices.filter((d) => d.deviceKind === 'sensor').length;
     const activeCount = allDevices.filter((d) => d.isAnnounced).length;
     const inactiveCount = allDevices.length - activeCount;
@@ -289,6 +291,7 @@ async function fetchNodes() {
     countSwitches.textContent = switchCount;
     if (countLights) countLights.textContent = lightCount;
     if (countClimate) countClimate.textContent = climateCount;
+    if (countClosures) countClosures.textContent = closureCount;
     countSensors.textContent = sensorCount;
     countActive.textContent = activeCount;
     countInactive.textContent = inactiveCount;
@@ -305,6 +308,7 @@ function getFilteredDevices(query) {
     if (activeTab === 'switch' && dev.deviceKind !== 'switch' && dev.deviceKind !== 'pump') return false;
     if (activeTab === 'light' && dev.deviceKind !== 'light') return false;
     if (activeTab === 'climate' && dev.deviceKind !== 'climate' && dev.deviceKind !== 'purifier' && dev.deviceKind !== 'fan') return false;
+    if (activeTab === 'closure' && dev.deviceKind !== 'closure') return false;
     if (activeTab === 'sensor' && dev.deviceKind !== 'sensor') return false;
     if (activeTab === 'active' && !dev.isAnnounced) return false;
     if (activeTab === 'inactive' && dev.isAnnounced) return false;
@@ -354,6 +358,9 @@ function computeCardsRenderKey(filtered, query) {
       avail: d.isAvailable !== false,
       isOnline: !!d.isOnline,
       raw: d.rawState,
+      closureType: d.closureType,
+      isOpen: !!d.isOpen,
+      isMoving: !!d.isMoving,
       isMultiLight: !!d.isMultiLight,
       channels: d.channels ? d.channels.map((c) => ({ id: c.id, isOn: c.isOn, bri: c.brightness })) : [],
     })),
@@ -411,6 +418,7 @@ function renderCard(dev) {
   const isClimate = dev.deviceKind === 'climate';
   const isPurifier = dev.deviceKind === 'purifier';
   const isFan = dev.deviceKind === 'fan';
+  const isClosure = dev.deviceKind === 'closure';
   const isSensor = dev.deviceKind === 'sensor';
   const isPaired = dev.isCommissioned;
   const isAvailable = dev.isAvailable !== false;
@@ -446,6 +454,20 @@ function renderCard(dev) {
     }
   } else if (isClimate) {
     typePill = '<span class="pill type-badge">Climate / AC</span>';
+  } else if (isClosure) {
+    if (dev.closureType === 'gate') {
+      typePill = '<span class="pill type-badge closure">🚪 Gate (Closure)</span>';
+    } else if (dev.closureType === 'garage_door') {
+      typePill = '<span class="pill type-badge closure">🏠 Garage Door (Closure)</span>';
+    } else if (dev.closureType === 'door') {
+      typePill = '<span class="pill type-badge closure">🚪 Door (Closure)</span>';
+    } else if (dev.closureType === 'window') {
+      typePill = '<span class="pill type-badge closure">🪟 Window (Closure)</span>';
+    } else if (dev.closureType === 'covering') {
+      typePill = '<span class="pill type-badge closure">🪟 Covering (Closure)</span>';
+    } else {
+      typePill = '<span class="pill type-badge closure">🚧 Barrier (Closure)</span>';
+    }
   } else if (isSensor) {
     if (dev.isSubSensor) {
       typePill = '<span class="pill type-badge" style="opacity: 0.85;">Sensor</span>';
@@ -652,6 +674,49 @@ function renderCard(dev) {
         }
       </div>
     `;
+  } else if (isClosure) {
+    const tagMap = {
+      gate: 'Gate (0x44 / 4)',
+      garage_door: 'GarageDoor (0x44 / 5)',
+      door: 'Door (0x44 / 6)',
+      window: 'Window (0x44 / 1)',
+      covering: 'Covering (0x44 / 0)',
+      barrier: 'Barrier (0x44 / 2)',
+    };
+    const tagLabel = tagMap[dev.closureType] || 'Barrier (0x44 / 2)';
+    const rawLower = String(dev.rawState || '').toLowerCase();
+    let posLabel = 'Unknown';
+    if (!isAvailable) {
+      posLabel = 'Unavailable';
+    } else if (rawLower === 'jammed') {
+      posLabel = '⚠️ Blocked';
+    } else if (dev.isMoving) {
+      posLabel = '⏳ Moving';
+    } else if (dev.isOpen) {
+      posLabel = '🔓 Open';
+    } else if (dev.closureState?.position === 0 || rawLower === 'locked' || rawLower === 'closed') {
+      posLabel = '🔒 Closed';
+    }
+
+    const secVal = dev.closureState?.secureState;
+    const secLabel = secVal === true ? '🔒 Secure' : secVal === false ? '🔓 Unsecured' : '--';
+
+    metricsHtml = `
+      <div class="sensor-readings">
+        <div class="sensor-metric">
+          <span class="metric-label">Position</span>
+          <span class="metric-value">${posLabel}</span>
+        </div>
+        <div class="sensor-metric">
+          <span class="metric-label">Matter Tag</span>
+          <span class="metric-value">${escapeHtml(tagLabel)}</span>
+        </div>
+        <div class="sensor-metric">
+          <span class="metric-label">Security</span>
+          <span class="metric-value">${secLabel}</span>
+        </div>
+      </div>
+    `;
   }
 
   // Body content: Announced vs Unannounced
@@ -705,7 +770,7 @@ function renderCard(dev) {
   } else {
     bodyContent = `
       <div class="unannounced-box">
-        <p>This ${isPurifier ? 'air purifier' : isFan ? 'fan' : isPump ? 'fountain / pump' : isSwitch ? 'switch' : isLight ? 'light' : isClimate ? 'thermostat / AC' : 'sensor'} is dormant. Announce it to allocate a Matter UDP port and pairing QR code.</p>
+        <p>This ${isPurifier ? 'air purifier' : isFan ? 'fan' : isPump ? 'fountain / pump' : isClosure ? (dev.closureType === 'gate' ? 'gate' : dev.closureType === 'garage_door' ? 'garage door' : 'closure / barrier') : isSwitch ? 'switch' : isLight ? 'light' : isClimate ? 'thermostat / AC' : 'sensor'} is dormant. Announce it to allocate a Matter UDP port and pairing QR code.</p>
         <button class="btn-announce" onclick="enableAnnouncement('${escapeHtml(dev.id)}', this)">
           ⚡ Announce as Matter Device
         </button>
@@ -757,6 +822,21 @@ function renderCard(dev) {
       <div class="footer-actions">
         <button class="btn-toggle ${!isAvailable ? 'disabled' : (dev.isOn ? 'active' : '')}" ${!isAvailable ? 'disabled title="Device is offline in Home Assistant"' : `onclick="toggleDevice('${escapeHtml(dev.id)}')"`}>
           ${!isAvailable ? 'Offline' : (dev.isOn ? 'Turn Off' : 'Turn On')}
+        </button>
+      </div>
+    `;
+  } else if (isClosure) {
+    const isMoving = !!dev.isMoving;
+    const isOpen = !!dev.isOpen;
+    const stateLabel = !isAvailable ? 'UNAVAILABLE' : (isMoving ? 'MOVING' : (isOpen ? 'OPEN' : 'CLOSED'));
+    footerContent = `
+      <div class="state-indicator">
+        <span class="state-dot ${!isAvailable ? 'offline' : (isOpen ? 'on' : '')}"></span>
+        <span>HA State: ${stateLabel}</span>
+      </div>
+      <div class="footer-actions">
+        <button class="btn-toggle ${!isAvailable ? 'disabled' : (isOpen ? 'active' : '')}" ${!isAvailable ? 'disabled title="Device is offline in Home Assistant"' : `onclick="toggleDevice('${escapeHtml(dev.id)}')"`}>
+          ${!isAvailable ? 'Offline' : (isOpen ? 'Close' : 'Open')}
         </button>
       </div>
     `;

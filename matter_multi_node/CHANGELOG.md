@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.7.7] - 2026-11-20
+
+- **Matter 1.5 `ClosureDevice` (`0x0230`) & Gate Support**:
+  - Added support for `lock` and `cover` Home Assistant domains in default `filter_domains` (`config.yaml` and `src/config.js`).
+  - Added Matter 1.5 `ClosureDevice` (`0x0230`) with `ClosureControlServer` (`Positioning` feature) handling `MoveTo` (`MoveToFullyOpen`, `MoveToFullyClosed`, `MoveToSignaturePosition`), `Stop`, `OverallCurrentState`, `OverallTargetState`, `MainState`, and emitting `secureStateChanged` / `movementCompleted` events.
+  - Added automatic `Closure` namespace (`0x44`) semantic tag detection (`ClosureTag.Gate`, `GarageDoor`, `Door`, `Window`, `Covering`, `Barrier`) prioritizing Gate indicators (`device_class: gate`, `mdi:gate`, or `"Gate"` in friendly/device name) so Matter Door/Lock entities acting as gates (e.g., `lock.garage_door_opener`) are exposed as real Matter 1.5 Gate closures.
+  - Added companion sensor suppression for `cover` and `lock` primary devices, live HA state synchronization, and clean timer lifecycle teardown.
+- **Dashboard UI Enhancements**:
+  - Added a **Gates & Covers** filter tab with live count badge.
+  - Added Closure cards displaying **Position** (`Open` / `Closed` / `Moving` / `Blocked`), **Matter Tag** (`Gate (0x44 / 4)`, etc.), **Security**, and **Open / Close** controls.
+
 ## 1.7.6
 
 - **Security Rating Improvement (Score 5 -> 6)**:
